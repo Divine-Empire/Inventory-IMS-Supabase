@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import Papa from "papaparse";
-import { prisma } from "@/lib/prisma";
+import { getSupabaseAdmin } from "@/lib/supabase";
 import { LOCATIONS, parseItemImportRow } from "@/lib/item-import";
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = getSupabaseAdmin();
     const formData = await req.formData();
     const file = formData.get("file");
 
@@ -29,12 +30,13 @@ export async function POST(req: NextRequest) {
     // Ensure the fixed location set exists (idempotent, additive only).
     const locationByCode = new Map<string, string>();
     for (const loc of LOCATIONS) {
-      const record = await prisma.locationMaster.upsert({
-        where: { locationCode: loc.code },
-        update: {},
-        create: { locationCode: loc.code, locationName: loc.name },
-      });
-      locationByCode.set(loc.code, record.id);
+      const { data, error } = await supabase
+        .from("ims_location_master")
+        .upsert({ locationCode: loc.code, locationName: loc.name }, { onConflict: "locationCode" })
+        .select("id, locationCode")
+        .single();
+      if (error) throw new Error(`Location upsert failed: ${error.message}`);
+      locationByCode.set(loc.code, data.id);
     }
 
     const errors: string[] = [];
@@ -52,61 +54,69 @@ export async function POST(req: NextRequest) {
       }
       if (!row) continue;
 
-      const existingItem = await prisma.itemMaster.findUnique({ where: { itemCode: row.itemCode } });
+      const { data: existingItem } = await supabase
+        .from("ims_item_master")
+        .select("itemCode")
+        .eq("itemCode", row.itemCode)
+        .maybeSingle();
 
-      await prisma.itemMaster.upsert({
-        where: { itemCode: row.itemCode },
-        update: {
-          itemName: row.itemName,
-          itemGroup: row.group || undefined,
-          category: row.category || undefined,
-          imageUrl: row.imageUrl || undefined,
-        },
-        create: {
+      const { error: itemErr } = await supabase.from("ims_item_master").upsert(
+        {
           itemCode: row.itemCode,
           itemName: row.itemName,
           itemGroup: row.group || null,
           category: row.category || null,
           imageUrl: row.imageUrl || null,
         },
-      });
+        { onConflict: "itemCode" }
+      );
+      if (itemErr) {
+        errors.push(`Row ${i + 2}: ${itemErr.message}`);
+        continue;
+      }
       existingItem ? itemsUpdated++ : itemsCreated++;
 
       const locationId = locationByCode.get(row.locationCode)!;
 
-      await prisma.itemLocationSetting.upsert({
-        where: { itemCode_locationId: { itemCode: row.itemCode, locationId } },
-        update: {
-          maxLevel: row.maxLevel ?? undefined,
-          avgSalePeak: row.avgSalePeak ?? undefined,
-        },
-        create: {
+      const { error: settingErr } = await supabase.from("ims_item_location_setting").upsert(
+        {
           itemCode: row.itemCode,
           locationId,
           maxLevel: row.maxLevel,
           avgSalePeak: row.avgSalePeak,
         },
-      });
+        { onConflict: "itemCode,locationId" }
+      );
+      if (settingErr) {
+        errors.push(`Row ${i + 2}: ${settingErr.message}`);
+        continue;
+      }
       locationSettingsUpserted++;
 
       if (row.liveStock !== null && row.liveStock !== 0) {
-        const alreadyOpened = await prisma.stockLedger.findFirst({
-          where: { itemCode: row.itemCode, locationId, referenceType: "Opening Import" },
-        });
+        const { data: alreadyOpened } = await supabase
+          .from("ims_stock_ledger")
+          .select("id")
+          .eq("itemCode", row.itemCode)
+          .eq("locationId", locationId)
+          .eq("referenceType", "Opening Import")
+          .maybeSingle();
 
         if (alreadyOpened) {
           openingEntriesSkipped++;
         } else {
-          await prisma.stockLedger.create({
-            data: {
-              itemCode: row.itemCode,
-              locationId,
-              txnType: "IN",
-              qty: row.liveStock,
-              referenceType: "Opening Import",
-              remarks: "Opening balance from CSV import",
-            },
+          const { error: ledgerErr } = await supabase.from("ims_stock_ledger").insert({
+            itemCode: row.itemCode,
+            locationId,
+            txnType: "IN",
+            qty: row.liveStock,
+            referenceType: "Opening Import",
+            remarks: "Opening balance from CSV import",
           });
+          if (ledgerErr) {
+            errors.push(`Row ${i + 2}: ${ledgerErr.message}`);
+            continue;
+          }
           openingEntriesAdded++;
         }
       }

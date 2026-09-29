@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getSupabaseAdmin } from "@/lib/supabase";
 
 export async function GET() {
   try {
-    const users = await prisma.user.findMany({
-      select: { id: true, username: true, fullName: true, role: true, pageAccess: true, locationAccess: true, createdAt: true },
-      orderBy: { createdAt: "asc" },
-    });
+    const supabase = getSupabaseAdmin();
+    const { data: users, error } = await supabase
+      .from("ims_User")
+      .select("id, username, fullName, role, pageAccess, locationAccess, createdAt")
+      .order("createdAt", { ascending: true });
+    if (error) throw new Error(error.message);
     return NextResponse.json({ success: true, users });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -15,6 +17,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = getSupabaseAdmin();
     const body = await req.json();
 
     if (body.action === "login") {
@@ -23,25 +26,19 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, error: "Username and password required" }, { status: 400 });
       }
 
-      const user = await prisma.user.findFirst({
-        where: { username: String(username).trim(), password: String(password).trim() },
-      });
+      const { data: user, error } = await supabase
+        .from("ims_User")
+        .select("id, username, fullName, role, pageAccess, locationAccess")
+        .eq("username", String(username).trim())
+        .eq("password", String(password).trim())
+        .maybeSingle();
 
+      if (error) throw new Error(error.message);
       if (!user) {
         return NextResponse.json({ success: false, error: "Invalid username or password" }, { status: 401 });
       }
 
-      return NextResponse.json({
-        success: true,
-        user: {
-          id: user.id,
-          username: user.username,
-          fullName: user.fullName,
-          role: user.role,
-          pageAccess: user.pageAccess,
-          locationAccess: user.locationAccess,
-        },
-      });
+      return NextResponse.json({ success: true, user });
     }
 
     // Create user
@@ -50,16 +47,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "username and fullName required" }, { status: 400 });
     }
 
-    const created = await prisma.user.create({
-      data: {
+    const { data: created, error } = await supabase
+      .from("ims_User")
+      .insert({
         username,
         fullName,
         password: password || "123456",
         role: role || "user",
         pageAccess: pageAccess ?? null,
         locationAccess: locationAccess ?? null,
-      },
-    });
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
     return NextResponse.json({ success: true, user: created });
   } catch (err: any) {
@@ -69,8 +69,9 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
+    const supabase = getSupabaseAdmin();
     const body = await req.json();
-    const { id, username, fullName, password, role, pageAccess, locationAccess, isActive } = body;
+    const { id, username, fullName, password, role, pageAccess, locationAccess } = body;
     if (!id) return NextResponse.json({ success: false, error: "id required" }, { status: 400 });
 
     const updateData: Record<string, any> = {};
@@ -81,7 +82,9 @@ export async function PUT(req: NextRequest) {
     if (pageAccess !== undefined) updateData.pageAccess = pageAccess;
     if (locationAccess !== undefined) updateData.locationAccess = locationAccess;
 
-    const updated = await prisma.user.update({ where: { id }, data: updateData });
+    const { data: updated, error } = await supabase.from("ims_User").update(updateData).eq("id", id).select().single();
+    if (error) throw new Error(error.message);
+
     return NextResponse.json({ success: true, user: updated });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -90,11 +93,14 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const supabase = getSupabaseAdmin();
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
     if (!id) return NextResponse.json({ success: false, error: "id required" }, { status: 400 });
 
-    await prisma.user.delete({ where: { id } });
+    const { error } = await supabase.from("ims_User").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+
     return NextResponse.json({ success: true });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });

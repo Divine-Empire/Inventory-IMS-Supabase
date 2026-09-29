@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getSupabaseAdmin } from "@/lib/supabase";
 import { createTransfer, StockTransferError } from "@/lib/stock-transfer";
 
 export async function GET() {
   try {
-    const transfers = await prisma.stockTransfer.findMany({
-      include: { items: true, fromLocation: true, toLocation: true },
-      orderBy: { createdAt: "desc" },
-    });
+    const supabase = getSupabaseAdmin();
+    const { data: transfers, error } = await supabase
+      .from("ims_stock_transfer")
+      .select(
+        "*, items:ims_stock_transfer_item(*), fromLocation:ims_location_master!ims_stock_transfer_fromLocationId_fkey(locationCode), toLocation:ims_location_master!ims_stock_transfer_toLocationId_fkey(locationCode)"
+      )
+      .order("createdAt", { ascending: false });
+    if (error) throw new Error(error.message);
     return NextResponse.json({ success: true, transfers });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });

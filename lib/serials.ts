@@ -1,41 +1,60 @@
-import { prisma } from "@/lib/prisma";
+import { getSupabaseAdmin } from "@/lib/supabase";
 
 export class SerialScanError extends Error {}
 
 async function resolveLocation(locationCode: string) {
-  const location = await prisma.locationMaster.findUnique({ where: { locationCode } });
-  if (!location) throw new SerialScanError(`Unknown location "${locationCode}"`);
-  return location;
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ims_location_master")
+    .select("id, locationCode")
+    .eq("locationCode", locationCode)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new SerialScanError(`Unknown location "${locationCode}"`);
+  return data;
 }
 
 export async function serialScanIn(params: {
   itemCode: string;
   locationCode: string;
   serialNo: string;
-  warrantyExpiryDate: string | null; // ISO date, mutually exclusive-ish with invoiceDate
+  warrantyExpiryDate: string | null;
   invoiceDate: string | null;
   createdBy?: string;
 }) {
+  const supabase = getSupabaseAdmin();
   const serialNo = params.serialNo.trim();
   if (!serialNo) throw new SerialScanError("Serial number is required");
   if (!params.warrantyExpiryDate && !params.invoiceDate) {
     throw new SerialScanError("Either Warranty Expiry Date or Invoice Date is required");
   }
 
-  const item = await prisma.itemMaster.findUnique({ where: { itemCode: params.itemCode } });
+  const { data: item, error: itemErr } = await supabase
+    .from("ims_item_master")
+    .select("itemCode")
+    .eq("itemCode", params.itemCode)
+    .maybeSingle();
+  if (itemErr) throw new Error(itemErr.message);
   if (!item) throw new SerialScanError(`Unknown item code "${params.itemCode}"`);
 
   const location = await resolveLocation(params.locationCode);
 
-  const existing = await prisma.serialNumber.findUnique({ where: { serialNo } });
+  const { data: existing, error: existingErr } = await supabase
+    .from("ims_serial_number")
+    .select("serialNo, itemCode, status")
+    .eq("serialNo", serialNo)
+    .maybeSingle();
+  if (existingErr) throw new Error(existingErr.message);
+
   if (existing && existing.status === "IN_STOCK") {
     throw new SerialScanError(
       `Serial "${serialNo}" is already IN STOCK (item ${existing.itemCode}). Scan it OUT first before scanning IN again.`
     );
   }
 
-  const ledgerEntry = await prisma.stockLedger.create({
-    data: {
+  const { data: ledgerEntry, error: ledgerErr } = await supabase
+    .from("ims_stock_ledger")
+    .insert({
       itemCode: item.itemCode,
       locationId: location.id,
       txnType: "IN",
@@ -43,43 +62,34 @@ export async function serialScanIn(params: {
       serialNo,
       referenceType: "Serial IN",
       createdBy: params.createdBy,
-    },
-  });
+    })
+    .select("id")
+    .single();
+  if (ledgerErr) throw new Error(ledgerErr.message);
 
-  const warrantyExpiryDate = params.warrantyExpiryDate ? new Date(params.warrantyExpiryDate) : null;
-  const invoiceDate = params.invoiceDate ? new Date(params.invoiceDate) : null;
+  const serialData = {
+    itemCode: item.itemCode,
+    serialNo,
+    currentLocationId: location.id,
+    status: "IN_STOCK",
+    warrantyExpiryDate: params.warrantyExpiryDate,
+    invoiceDate: params.invoiceDate,
+    inTxnId: ledgerEntry.id,
+    outTxnId: null,
+  };
 
-  const serial = existing
-    ? await prisma.serialNumber.update({
-        where: { serialNo },
-        data: {
-          itemCode: item.itemCode,
-          currentLocationId: location.id,
-          status: "IN_STOCK",
-          warrantyExpiryDate,
-          invoiceDate,
-          inTxnId: ledgerEntry.id,
-          outTxnId: null,
-        },
-      })
-    : await prisma.serialNumber.create({
-        data: {
-          itemCode: item.itemCode,
-          serialNo,
-          currentLocationId: location.id,
-          status: "IN_STOCK",
-          warrantyExpiryDate,
-          invoiceDate,
-          inTxnId: ledgerEntry.id,
-        },
-      });
+  const { data: serial, error: serialErr } = await supabase
+    .from("ims_serial_number")
+    .upsert(serialData, { onConflict: "serialNo" })
+    .select()
+    .single();
+  if (serialErr) throw new Error(serialErr.message);
 
   return serial;
 }
 
-function expiryKey(s: { warrantyExpiryDate: Date | null; invoiceDate: Date | null }): number {
-  const d = s.warrantyExpiryDate ?? s.invoiceDate;
-  return d ? d.getTime() : Number.MAX_SAFE_INTEGER;
+function expiryKey(s: { warrantyExpiryDate: string | null; invoiceDate: string | null }): string {
+  return s.warrantyExpiryDate ?? s.invoiceDate ?? "9999-12-31";
 }
 
 export async function serialScanOut(params: {
@@ -88,10 +98,16 @@ export async function serialScanOut(params: {
   override?: boolean;
   createdBy?: string;
 }) {
+  const supabase = getSupabaseAdmin();
   const serialNo = params.serialNo.trim();
   const location = await resolveLocation(params.locationCode);
 
-  const serial = await prisma.serialNumber.findUnique({ where: { serialNo } });
+  const { data: serial, error: serialErr } = await supabase
+    .from("ims_serial_number")
+    .select("*")
+    .eq("serialNo", serialNo)
+    .maybeSingle();
+  if (serialErr) throw new Error(serialErr.message);
   if (!serial) throw new SerialScanError(`Unknown serial number "${serialNo}" — it was never scanned IN.`);
 
   if (serial.status !== "IN_STOCK") {
@@ -99,9 +115,9 @@ export async function serialScanOut(params: {
   }
 
   if (serial.currentLocationId !== location.id) {
-    const actualLocation = serial.currentLocationId
-      ? await prisma.locationMaster.findUnique({ where: { id: serial.currentLocationId } })
-      : null;
+    const { data: actualLocation } = serial.currentLocationId
+      ? await supabase.from("ims_location_master").select("locationCode").eq("id", serial.currentLocationId).maybeSingle()
+      : { data: null };
     throw new SerialScanError(
       `Serial "${serialNo}" is in stock at ${actualLocation?.locationCode ?? "an unknown location"}, not at ${params.locationCode}.`
     );
@@ -109,10 +125,15 @@ export async function serialScanOut(params: {
 
   // FIFO / oldest-stock-first advisory: if older stock of the same item+location
   // exists, warn before letting a newer-dated serial go OUT first.
-  const siblings = await prisma.serialNumber.findMany({
-    where: { itemCode: serial.itemCode, currentLocationId: location.id, status: "IN_STOCK" },
-  });
-  const sorted = [...siblings].sort((a, b) => expiryKey(a) - expiryKey(b));
+  const { data: siblings, error: siblingsErr } = await supabase
+    .from("ims_serial_number")
+    .select("serialNo, warrantyExpiryDate, invoiceDate")
+    .eq("itemCode", serial.itemCode)
+    .eq("currentLocationId", location.id)
+    .eq("status", "IN_STOCK");
+  if (siblingsErr) throw new Error(siblingsErr.message);
+
+  const sorted = [...(siblings || [])].sort((a, b) => (expiryKey(a) < expiryKey(b) ? -1 : expiryKey(a) > expiryKey(b) ? 1 : 0));
   const oldest = sorted[0];
 
   if (oldest && oldest.serialNo !== serial.serialNo && !params.override) {
@@ -120,13 +141,14 @@ export async function serialScanOut(params: {
       needsConfirmation: true as const,
       message: `Older stock is already available for this item: Serial "${oldest.serialNo}" (${
         oldest.warrantyExpiryDate ? "warranty expiry" : "invoice date"
-      } ${(oldest.warrantyExpiryDate ?? oldest.invoiceDate)?.toISOString().slice(0, 10)}). Use that one first, or confirm to proceed with this scan anyway.`,
+      } ${(oldest.warrantyExpiryDate ?? oldest.invoiceDate)?.slice(0, 10)}). Use that one first, or confirm to proceed with this scan anyway.`,
       oldestSerial: oldest,
     };
   }
 
-  const ledgerEntry = await prisma.stockLedger.create({
-    data: {
+  const { data: ledgerEntry, error: ledgerErr } = await supabase
+    .from("ims_stock_ledger")
+    .insert({
       itemCode: serial.itemCode,
       locationId: location.id,
       txnType: "OUT",
@@ -134,13 +156,18 @@ export async function serialScanOut(params: {
       serialNo,
       referenceType: "Serial OUT",
       createdBy: params.createdBy,
-    },
-  });
+    })
+    .select("id")
+    .single();
+  if (ledgerErr) throw new Error(ledgerErr.message);
 
-  const updated = await prisma.serialNumber.update({
-    where: { serialNo },
-    data: { status: "OUT", outTxnId: ledgerEntry.id },
-  });
+  const { data: updated, error: updateErr } = await supabase
+    .from("ims_serial_number")
+    .update({ status: "OUT", outTxnId: ledgerEntry.id })
+    .eq("serialNo", serialNo)
+    .select()
+    .single();
+  if (updateErr) throw new Error(updateErr.message);
 
   return { needsConfirmation: false as const, serial: updated };
 }

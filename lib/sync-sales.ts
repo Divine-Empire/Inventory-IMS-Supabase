@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { getSupabaseAdmin } from "@/lib/supabase";
 import { salesDbSelect, inFilter } from "@/lib/sales-db";
 
 type OtpMakeInvoice = {
@@ -21,6 +21,8 @@ type LtoQuotationItem = {
 const EXCLUDED_ITEM_NAMES = ["FREIGHT", "PACKAGING AND FORWARDING"];
 
 export async function syncSales() {
+  const supabase = getSupabaseAdmin();
+
   const invoices = await salesDbSelect<OtpMakeInvoice>(
     "otp_make_invoice",
     "select=id,order_id,invoice_number,invoice_date,items"
@@ -48,9 +50,11 @@ export async function syncSales() {
     rateByKey.set(key, li.rate);
   }
 
-  const itemMasters = await prisma.itemMaster.findMany({ select: { itemCode: true, itemName: true } });
-  const itemCodeSet = new Set(itemMasters.map((i) => i.itemCode.toUpperCase()));
-  const itemCodeByName = new Map(itemMasters.map((i) => [i.itemName.toUpperCase().trim(), i.itemCode]));
+  const { data: itemMasters, error: itemErr } = await supabase.from("ims_item_master").select("itemCode, itemName");
+  if (itemErr) throw new Error(itemErr.message);
+
+  const itemCodeSet = new Set((itemMasters || []).map((i) => i.itemCode.toUpperCase()));
+  const itemCodeByName = new Map((itemMasters || []).map((i) => [i.itemName.toUpperCase().trim(), i.itemCode]));
 
   let rowsUpserted = 0;
   let unmatchedOrder = 0;
@@ -89,9 +93,13 @@ export async function syncSales() {
       const amount = rate * qty;
       const invoiceNo = invoice.invoice_number || invoice.id;
 
-      const existing = await prisma.salesTransaction.findFirst({
-        where: { quotationNo, invoiceNo, itemCode: itemCode ?? undefined, itemNameRaw: itemCode ? undefined : line.item_name },
-      });
+      let existingQuery = supabase
+        .from("ims_sales_transaction")
+        .select("id")
+        .eq("quotationNo", quotationNo)
+        .eq("invoiceNo", invoiceNo);
+      existingQuery = itemCode ? existingQuery.eq("itemCode", itemCode) : existingQuery.eq("itemNameRaw", line.item_name || "");
+      const { data: existing } = await existingQuery.maybeSingle();
 
       const data = {
         quotationNo,
@@ -101,15 +109,15 @@ export async function syncSales() {
         rate,
         amount,
         invoiceNo,
-        invoiceDate: invoice.invoice_date ? new Date(invoice.invoice_date) : null,
+        invoiceDate: invoice.invoice_date || null,
         sourceSystem: "OTP+LTO",
       };
 
-      if (existing) {
-        await prisma.salesTransaction.update({ where: { id: existing.id }, data });
-      } else {
-        await prisma.salesTransaction.create({ data });
-      }
+      const { error: writeErr } = existing
+        ? await supabase.from("ims_sales_transaction").update(data).eq("id", existing.id)
+        : await supabase.from("ims_sales_transaction").insert(data);
+      if (writeErr) throw new Error(writeErr.message);
+
       rowsUpserted++;
     }
   }

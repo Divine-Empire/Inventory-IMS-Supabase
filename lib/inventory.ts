@@ -1,8 +1,8 @@
-import { prisma } from "@/lib/prisma";
+import { getSupabaseAdmin, fetchAllRows } from "@/lib/supabase";
 
 // OUT movement in the trailing window used to classify Fast/Slow/Non-Moving.
 // Thresholds are a starting default — tune once real OUT history exists
-// (see prisma/DB_SCHEMA.md).
+// (see Database/README.md).
 const MOVEMENT_WINDOW_DAYS = 90;
 const FAST_MOVING_MIN_OUT_QTY = 10;
 
@@ -54,36 +54,39 @@ function signedLedgerQty(txnType: string, qty: number): number {
 }
 
 export async function getInventoryRows(): Promise<InventoryRow[]> {
-  const [locationSettings, ledgerRows, indentPoRows, salesRows, serialRows, recentOutRows] =
-    await Promise.all([
-      prisma.itemLocationSetting.findMany({
-        include: { item: true, location: true },
-      }),
-      prisma.stockLedger.findMany({
-        select: { itemCode: true, locationId: true, txnType: true, qty: true },
-      }),
-      prisma.indentPoSync.findMany({
-        select: { itemCode: true, locationId: true, indentQty: true, poQty: true, receivedQty: true, intransitQty: true },
-      }),
-      prisma.salesTransaction.findMany({
-        select: { itemCode: true, locationId: true, qty: true, amount: true },
-      }),
-      prisma.serialNumber.findMany({
-        where: { status: "IN_STOCK" },
-        select: { itemCode: true, currentLocationId: true, warrantyExpiryDate: true, invoiceDate: true },
-      }),
-      prisma.stockLedger.findMany({
-        where: { txnType: "OUT", createdAt: { gte: new Date(Date.now() - MOVEMENT_WINDOW_DAYS * 86400000) } },
-        select: { itemCode: true, locationId: true, qty: true },
-      }),
-    ]);
+  const supabase = getSupabaseAdmin();
+  const cutoff = new Date(Date.now() - MOVEMENT_WINDOW_DAYS * 86400000).toISOString();
+
+  const [locationSettings, ledgerRows, indentPoRows, salesRows, serialRows, recentOutRows] = await Promise.all([
+    fetchAllRows<any>(() =>
+      supabase
+        .from("ims_item_location_setting")
+        .select(
+          "itemCode, locationId, maxLevel, item:ims_item_master(itemName, itemGroup, category, uom, defaultLeadTimeDays), location:ims_location_master(locationCode, locationName)"
+        )
+    ),
+    fetchAllRows<any>(() => supabase.from("ims_stock_ledger").select("itemCode, locationId, txnType, qty")),
+    fetchAllRows<any>(() =>
+      supabase.from("ims_indent_po_sync").select("itemCode, locationId, indentQty, poQty, receivedQty, intransitQty")
+    ),
+    fetchAllRows<any>(() => supabase.from("ims_sales_transaction").select("itemCode, locationId, qty, amount")),
+    fetchAllRows<any>(() =>
+      supabase
+        .from("ims_serial_number")
+        .select("itemCode, currentLocationId, warrantyExpiryDate, invoiceDate")
+        .eq("status", "IN_STOCK")
+    ),
+    fetchAllRows<any>(() =>
+      supabase.from("ims_stock_ledger").select("itemCode, locationId, qty").eq("txnType", "OUT").gte("createdAt", cutoff)
+    ),
+  ]);
 
   const key = (itemCode: string, locationId: string | null) => `${itemCode}::${locationId ?? ""}`;
 
   const liveStockMap = new Map<string, number>();
   const transferInMap = new Map<string, number>();
   const transferOutMap = new Map<string, number>();
-  for (const r of ledgerRows) {
+  for (const r of ledgerRows || []) {
     const k = key(r.itemCode, r.locationId);
     liveStockMap.set(k, (liveStockMap.get(k) || 0) + signedLedgerQty(r.txnType, r.qty));
     if (r.txnType === "TRANSFER_IN") transferInMap.set(k, (transferInMap.get(k) || 0) + r.qty);
@@ -91,13 +94,13 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
   }
 
   const recentOutMap = new Map<string, number>();
-  for (const r of recentOutRows) {
+  for (const r of recentOutRows || []) {
     const k = key(r.itemCode, r.locationId);
     recentOutMap.set(k, (recentOutMap.get(k) || 0) + r.qty);
   }
 
   const indentMap = new Map<string, { indentQty: number; poQty: number; receivedQty: number; intransitQty: number }>();
-  for (const r of indentPoRows) {
+  for (const r of indentPoRows || []) {
     if (!r.itemCode) continue;
     const k = key(r.itemCode, r.locationId);
     const acc = indentMap.get(k) || { indentQty: 0, poQty: 0, receivedQty: 0, intransitQty: 0 };
@@ -109,7 +112,7 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
   }
 
   const salesMap = new Map<string, { qty: number; amount: number }>();
-  for (const r of salesRows) {
+  for (const r of salesRows || []) {
     if (!r.itemCode) continue;
     const k = key(r.itemCode, r.locationId);
     const acc = salesMap.get(k) || { qty: 0, amount: 0 };
@@ -118,8 +121,8 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
     salesMap.set(k, acc);
   }
 
-  const serialMap = new Map<string, { count: number; nearestExpiry: Date | null }>();
-  for (const r of serialRows) {
+  const serialMap = new Map<string, { count: number; nearestExpiry: string | null }>();
+  for (const r of serialRows || []) {
     const k = key(r.itemCode, r.currentLocationId);
     const acc = serialMap.get(k) || { count: 0, nearestExpiry: null };
     acc.count += 1;
@@ -128,7 +131,7 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
     serialMap.set(k, acc);
   }
 
-  return locationSettings.map((setting) => {
+  return (locationSettings || []).map((setting: any) => {
     const k = key(setting.itemCode, setting.locationId);
     const liveStock = liveStockMap.get(k) || 0;
     const indent = indentMap.get(k) || { indentQty: 0, poQty: 0, receivedQty: 0, intransitQty: 0 };
@@ -172,7 +175,7 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
       stockTransferOutQty: transferOutMap.get(k) || 0,
 
       serialCount: serials.count,
-      nearestWarrantyExpiry: serials.nearestExpiry ? serials.nearestExpiry.toISOString() : null,
+      nearestWarrantyExpiry: serials.nearestExpiry,
     };
   });
 }
