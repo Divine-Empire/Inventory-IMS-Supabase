@@ -315,18 +315,27 @@ function SettingsContent() {
   );
 }
 
+const SYNC_TYPES = {
+  pfms: { label: "PFMS Sync (Indent/PO/In-Transit)", endpoint: "pfms" },
+  sales: { label: "Sales Sync (OTP + LTO)", endpoint: "sales" },
+  "pfms-serials": { label: "PFMS Serial IN Sync", endpoint: "pfms-serials" },
+  "pfms-returns": { label: "PFMS Purchase Return Sync", endpoint: "pfms-returns" },
+} as const;
+
+type SyncType = keyof typeof SYNC_TYPES;
+
 function DataSyncCard() {
-  const [syncing, setSyncing] = useState<"pfms" | "sales" | null>(null);
+  const [syncing, setSyncing] = useState<SyncType | null>(null);
   const [lastResult, setLastResult] = useState<{ label: string; summary: Record<string, number> } | null>(null);
 
-  const runSync = async (type: "pfms" | "sales") => {
+  const runSync = async (type: SyncType) => {
     setSyncing(type);
     try {
-      const res = await fetch(`/api/sync/${type === "pfms" ? "pfms" : "sales"}`, { method: "POST" });
+      const res = await fetch(`/api/sync/${SYNC_TYPES[type].endpoint}`, { method: "POST" });
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
-      setLastResult({ label: type === "pfms" ? "PFMS Sync" : "Sales Sync (OTP + LTO)", summary: data.summary });
-      toast.success(`${type === "pfms" ? "PFMS" : "Sales"} sync complete`);
+      setLastResult({ label: SYNC_TYPES[type].label, summary: data.summary });
+      toast.success(`${SYNC_TYPES[type].label} complete`);
     } catch (err: any) {
       toast.error(err.message || "Sync failed");
     } finally {
@@ -341,19 +350,23 @@ function DataSyncCard() {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <p className="text-sm text-slate-500">
-          Pulls Indent/PO/In-Transit data from PFMS, and per-item sales value from OTP + LTO, into this system's
-          Inventory and ABC/EOQ views. Run manually for now — matches items by item code/name, so results improve
-          as the Item Master fills in.
+          Pulls Indent/PO/In-Transit, per-item sales value, and PFMS-generated serial numbers (Serial Generation
+          stage) into this system. Purchase Returns land as a quantity-level stock adjustment — PFMS doesn't track
+          which specific serial was returned. Run manually — safe to click repeatedly, already-synced rows are
+          skipped. Item/serial OUT events from OTP are recorded live (no sync needed for those).
         </p>
         <div className="flex flex-wrap gap-3">
-          <Button disabled={!!syncing} onClick={() => runSync("pfms")} className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white">
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${syncing === "pfms" ? "animate-spin" : ""}`} />
-            {syncing === "pfms" ? "Syncing PFMS..." : "Sync PFMS (Indent/PO/In-Transit)"}
-          </Button>
-          <Button disabled={!!syncing} onClick={() => runSync("sales")} className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white">
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${syncing === "sales" ? "animate-spin" : ""}`} />
-            {syncing === "sales" ? "Syncing Sales..." : "Sync Sales (OTP + LTO)"}
-          </Button>
+          {(Object.keys(SYNC_TYPES) as SyncType[]).map((type) => (
+            <Button
+              key={type}
+              disabled={!!syncing}
+              onClick={() => runSync(type)}
+              className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white"
+            >
+              <RefreshCw className={`w-4 h-4 mr-1.5 ${syncing === type ? "animate-spin" : ""}`} />
+              {syncing === type ? "Syncing..." : SYNC_TYPES[type].label}
+            </Button>
+          ))}
         </div>
 
         {lastResult && (

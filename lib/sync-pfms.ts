@@ -1,15 +1,5 @@
 import { getSupabaseAdmin, fetchAllRows } from "@/lib/supabase";
-
-// PFMS's warehouseLocation free-text values, normalized -> our fixed
-// location codes. "C.G Warehosue" is a real typo present in PFMS's live
-// data (verified against pfms_for_ims), kept here deliberately.
-const LOCATION_ALIASES: Record<string, string> = {
-  "NE WAREHOUSE": "NE",
-  "MANIQUIP STORE": "MANIQUIP",
-  "C.G WAREHOUSE": "CG",
-  "C.G WAREHOSUE": "CG",
-  "HEAD OFFICE": "HO",
-};
+import { PFMS_LOCATION_ALIASES } from "@/lib/pfms-location-aliases";
 
 // Batched (not one row at a time): with 1000+ indent rows, upserting them
 // one by one was observed to take minutes. supabase-js's .upsert() accepts
@@ -63,7 +53,7 @@ export async function syncPfms() {
     if (!itemCode) unmatchedItem++;
 
     const locKey = (row.warehouseLocation || "").trim().toUpperCase();
-    const locationId = LOCATION_ALIASES[locKey] ? locationByCode.get(LOCATION_ALIASES[locKey]) : undefined;
+    const locationId = PFMS_LOCATION_ALIASES[locKey] ? locationByCode.get(PFMS_LOCATION_ALIASES[locKey]) : undefined;
     if (!locationId) unmatchedLocation++;
 
     return {
