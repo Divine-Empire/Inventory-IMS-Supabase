@@ -10,10 +10,10 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetDescription, Visual
 import {
   LayoutDashboard,
   Boxes,
-  ClipboardList,
   ArrowLeftRight,
   PieChart,
   FileBarChart,
+  BookOpen,
   Settings,
   LogOut,
   Menu,
@@ -22,10 +22,10 @@ import {
 export const menuItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, step: "dashboard" },
   { href: "/inventory", label: "Inventory", icon: Boxes, step: "inventory" },
-  { href: "/item-master", label: "Item Master", icon: ClipboardList, step: "item-master" },
   { href: "/stock-transfer", label: "Stock Transfer", icon: ArrowLeftRight, step: "stock-transfer" },
   { href: "/abc-eoq-analysis", label: "ABC / EOQ Analysis", icon: PieChart, step: "abc-eoq-analysis" },
   { href: "/reports", label: "Reports", icon: FileBarChart, step: "reports" },
+  { href: "/glossary", label: "Glossary", icon: BookOpen, step: "glossary" },
   { href: "/settings", label: "Settings", icon: Settings, step: "settings" },
 ];
 

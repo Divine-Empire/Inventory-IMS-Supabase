@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, RefreshCw } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +24,7 @@ type IMSUser = {
 };
 
 const LOCATIONS = ["CG", "NE", "MANIQUIP", "HO"];
+const ALL_STEPS = menuItems.map((m) => m.step);
 
 export default function SettingsPage() {
   return (
@@ -78,8 +79,8 @@ function SettingsContent() {
       fullName: u.fullName,
       password: "",
       role: u.role,
-      pageAccess: u.pageAccess ? u.pageAccess.split(",").map((s) => s.trim()) : [],
-      locationAccess: u.locationAccess ? u.locationAccess.split(",").map((s) => s.trim()) : [],
+      pageAccess: u.pageAccess ? u.pageAccess.split(",").filter(Boolean) : [],
+      locationAccess: u.locationAccess ? u.locationAccess.split(",").filter(Boolean) : [],
     });
     setDialogOpen(true);
   };
@@ -95,6 +96,24 @@ function SettingsContent() {
     setForm((f) => ({
       ...f,
       locationAccess: f.locationAccess.includes(loc) ? f.locationAccess.filter((s) => s !== loc) : [...f.locationAccess, loc],
+    }));
+  };
+
+  const allStepsSelected = ALL_STEPS.every((s) => form.pageAccess.includes(s));
+  const allLocationsSelected = LOCATIONS.every((l) => form.locationAccess.includes(l));
+
+  const toggleAllSteps = () => setForm((f) => ({ ...f, pageAccess: allStepsSelected ? [] : [...ALL_STEPS] }));
+  const toggleAllLocations = () => setForm((f) => ({ ...f, locationAccess: allLocationsSelected ? [] : [...LOCATIONS] }));
+
+  const handleRoleChange = (role: string) => {
+    setForm((f) => ({
+      ...f,
+      role,
+      // Admin implicitly gets every page/location already (see sidebar.tsx
+      // filteredMenuItems) — auto-check everything here too so the form
+      // reflects that instead of looking empty/incomplete.
+      pageAccess: role === "admin" ? [...ALL_STEPS] : f.pageAccess,
+      locationAccess: role === "admin" ? [...LOCATIONS] : f.locationAccess,
     }));
   };
 
@@ -166,23 +185,23 @@ function SettingsContent() {
                 <Plus className="w-4 h-4 mr-1" /> Add User
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>{editingUser ? "Edit User" : "Add User"}</DialogTitle>
               </DialogHeader>
-              <div className="flex flex-col gap-4 max-h-[60vh] overflow-y-auto pr-1">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
+              <div className="flex flex-col gap-5 max-h-[65vh] overflow-y-auto px-1 py-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
                     <Label>Username</Label>
                     <Input value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <Label>Full Name</Label>
                     <Input value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
                     <Label>Password {editingUser && <span className="text-xs text-slate-400">(leave blank to keep)</span>}</Label>
                     <Input
                       type="password"
@@ -190,9 +209,9 @@ function SettingsContent() {
                       onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
                     />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <Label>Role</Label>
-                    <Select value={form.role} onValueChange={(v) => setForm((f) => ({ ...f, role: v }))}>
+                    <Select value={form.role} onValueChange={handleRoleChange}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -204,36 +223,52 @@ function SettingsContent() {
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <Label>Page Access</Label>
-                  <div className="grid grid-cols-2 gap-2 border rounded-md p-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Page Access</Label>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 cursor-pointer">
+                      <input type="checkbox" checked={allStepsSelected} onChange={toggleAllSteps} disabled={form.role === "admin"} />
+                      Select All
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5 border rounded-md p-4 bg-slate-50/50">
                     {menuItems.map((item) => (
                       <label key={item.step} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
                           checked={form.pageAccess.includes(item.step)}
                           onChange={() => toggleStep(item.step)}
+                          disabled={form.role === "admin"}
                         />
                         {item.label}
                       </label>
                     ))}
                   </div>
+                  {form.role === "admin" && <p className="text-[11px] text-slate-400">Admins always have access to every page.</p>}
                 </div>
 
-                <div className="space-y-1">
-                  <Label>Location Access</Label>
-                  <div className="grid grid-cols-2 gap-2 border rounded-md p-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Location Access</Label>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 cursor-pointer">
+                      <input type="checkbox" checked={allLocationsSelected} onChange={toggleAllLocations} disabled={form.role === "admin"} />
+                      Select All
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5 border rounded-md p-4 bg-slate-50/50">
                     {LOCATIONS.map((loc) => (
                       <label key={loc} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
                           checked={form.locationAccess.includes(loc)}
                           onChange={() => toggleLocation(loc)}
+                          disabled={form.role === "admin"}
                         />
                         {loc}
                       </label>
                     ))}
                   </div>
+                  {form.role === "admin" && <p className="text-[11px] text-slate-400">Admins always have access to every location.</p>}
                 </div>
               </div>
               <DialogFooter>
@@ -277,7 +312,7 @@ function SettingsContent() {
                     <TableCell className="text-xs text-slate-500 max-w-[200px] truncate">
                       {u.role === "admin" ? "All" : u.pageAccess || "-"}
                     </TableCell>
-                    <TableCell className="text-xs text-slate-500">{u.locationAccess || "All"}</TableCell>
+                    <TableCell className="text-xs text-slate-500">{u.role === "admin" ? "All" : u.locationAccess || "-"}</TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>
                         <Pencil className="w-4 h-4" />
@@ -293,96 +328,6 @@ function SettingsContent() {
           </Table>
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Locations</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-slate-500 mb-3">
-            Fixed location set for this IMS deployment (matches PFMS's warehouseLocation values).
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {LOCATIONS.map((loc) => (
-              <Badge key={loc} variant="outline">{loc}</Badge>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <DataSyncCard />
     </div>
-  );
-}
-
-const SYNC_TYPES = {
-  pfms: { label: "PFMS Sync (Indent/PO/In-Transit)", endpoint: "pfms" },
-  sales: { label: "Sales Sync (OTP + LTO)", endpoint: "sales" },
-  "pfms-serials": { label: "PFMS Serial IN Sync", endpoint: "pfms-serials" },
-  "pfms-returns": { label: "PFMS Purchase Return Sync", endpoint: "pfms-returns" },
-} as const;
-
-type SyncType = keyof typeof SYNC_TYPES;
-
-function DataSyncCard() {
-  const [syncing, setSyncing] = useState<SyncType | null>(null);
-  const [lastResult, setLastResult] = useState<{ label: string; summary: Record<string, number> } | null>(null);
-
-  const runSync = async (type: SyncType) => {
-    setSyncing(type);
-    try {
-      const res = await fetch(`/api/sync/${SYNC_TYPES[type].endpoint}`, { method: "POST" });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error);
-      setLastResult({ label: SYNC_TYPES[type].label, summary: data.summary });
-      toast.success(`${SYNC_TYPES[type].label} complete`);
-    } catch (err: any) {
-      toast.error(err.message || "Sync failed");
-    } finally {
-      setSyncing(null);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Data Sync</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <p className="text-sm text-slate-500">
-          Pulls Indent/PO/In-Transit, per-item sales value, and PFMS-generated serial numbers (Serial Generation
-          stage) into this system. Purchase Returns land as a quantity-level stock adjustment — PFMS doesn't track
-          which specific serial was returned. Run manually — safe to click repeatedly, already-synced rows are
-          skipped. Item/serial OUT events from OTP are recorded live (no sync needed for those).
-        </p>
-        <div className="flex flex-wrap gap-3">
-          {(Object.keys(SYNC_TYPES) as SyncType[]).map((type) => (
-            <Button
-              key={type}
-              disabled={!!syncing}
-              onClick={() => runSync(type)}
-              className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white"
-            >
-              <RefreshCw className={`w-4 h-4 mr-1.5 ${syncing === type ? "animate-spin" : ""}`} />
-              {syncing === type ? "Syncing..." : SYNC_TYPES[type].label}
-            </Button>
-          ))}
-        </div>
-
-        {lastResult && (
-          <div className="border border-slate-200 rounded-md p-3 bg-slate-50">
-            <p className="text-xs font-bold text-slate-700 mb-2">{lastResult.label} — last run result</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {Object.entries(lastResult.summary).map(([k, v]) => (
-                <div key={k} className="bg-white border border-slate-200 rounded px-2 py-1.5">
-                  <div className="text-sm font-extrabold text-slate-900">{v}</div>
-                  <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{k}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }

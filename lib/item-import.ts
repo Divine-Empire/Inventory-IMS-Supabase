@@ -15,6 +15,7 @@ export const ITEM_IMPORT_HEADERS = [
   "IMAGE",
   "LOCATION",
   "AVG SALE (PEAK)",
+  "MAX LEVEL",
   "MAX LEVEL (PEAK)",
   "LIVE STOCK",
 ] as const;
@@ -28,6 +29,7 @@ export type ItemImportRow = {
   locationCode: string;
   avgSalePeak: number | null;
   maxLevel: number | null;
+  maxLevelPeak: number | null;
   liveStock: number | null;
 };
 
@@ -66,7 +68,8 @@ export function parseItemImportRow(
       imageUrl: (raw["IMAGE"] || "").trim(),
       locationCode,
       avgSalePeak: toNumberOrNull(raw["AVG SALE (PEAK)"]),
-      maxLevel: toNumberOrNull(raw["MAX LEVEL (PEAK)"]),
+      maxLevel: toNumberOrNull(raw["MAX LEVEL"]),
+      maxLevelPeak: toNumberOrNull(raw["MAX LEVEL (PEAK)"]),
       liveStock: toNumberOrNull(raw["LIVE STOCK"]),
     },
     error: null,

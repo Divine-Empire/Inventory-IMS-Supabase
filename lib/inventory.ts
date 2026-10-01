@@ -16,17 +16,14 @@ export type InventoryRow = {
   locationName: string;
 
   liveStock: number;
-  indentRaisedQty: number;
-  poQty: number;
-  pendingPoQty: number; // poQty - receivedQty, floored at 0
-  materialInTransitQty: number;
-  leadTimeDays: number | null;
-
-  targetQty: number; // liveStock + materialInTransitQty
   maxLevel: number | null;
+  maxLevelPeak: number | null;
+  indentRaisedQty: number;
+  poQty: number; // still pending at PFMS's Follow-Up Vendor stage (PO+Negotiation done, not fully lifted)
+  materialInTransitQty: number;
+  targetQty: number; // liveStock + materialInTransitQty
   reorderQty: number | null; // maxLevel - (liveStock + indentRaisedQty)
-
-  status: "Fast Moving" | "Slow Moving" | "Non-Moving";
+  leadTimeDays: number | null;
 
   totalSalesQty: number;
   totalSalesValue: number;
@@ -35,7 +32,10 @@ export type InventoryRow = {
   stockTransferOutQty: number;
 
   serialCount: number;
-  nearestWarrantyExpiry: string | null; // ISO date of soonest-expiring in-stock serial
+  nearestWarrantyExpiry: string | null; // ISO date of soonest-expiring in-stock serial with a warranty
+  nearestInvoiceDate: string | null; // ISO date of soonest-expiring in-stock serial without a warranty (invoice date fallback)
+
+  status: "Fast Moving" | "Slow Moving" | "Non-Moving";
 };
 
 function signedLedgerQty(txnType: string, qty: number): number {
@@ -57,19 +57,20 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
   const supabase = getSupabaseAdmin();
   const cutoff = new Date(Date.now() - MOVEMENT_WINDOW_DAYS * 86400000).toISOString();
 
-  const [locationSettings, ledgerRows, indentPoRows, salesRows, serialRows, recentOutRows] = await Promise.all([
-    fetchAllRows<any>(() =>
-      supabase
-        .from("ims_item_location_setting")
-        .select(
-          "itemCode, locationId, maxLevel, item:ims_item_master(itemName, itemGroup, category, uom, defaultLeadTimeDays), location:ims_location_master(locationCode, locationName)"
-        )
-    ),
+  const [
+    locationSettings,
+    ledgerRows,
+    pfmsPendingRows,
+    salesPendingRows,
+    serialRows,
+    recentOutRows,
+    itemMasters,
+    locationMasters,
+  ] = await Promise.all([
+    fetchAllRows<any>(() => supabase.from("ims_item_location_setting").select("itemCode, locationId, maxLevel, maxLevelPeak")),
     fetchAllRows<any>(() => supabase.from("ims_stock_ledger").select("itemCode, locationId, txnType, qty")),
-    fetchAllRows<any>(() =>
-      supabase.from("ims_indent_po_sync").select("itemCode, locationId, indentQty, poQty, receivedQty, intransitQty")
-    ),
-    fetchAllRows<any>(() => supabase.from("ims_sales_transaction").select("itemCode, locationId, qty, amount")),
+    fetchAllRows<any>(() => supabase.from("ims_pfms_pending_snapshot").select("itemCode, locationId, indentRaisedQty, poQty, intransitQty, leadTimeDays")),
+    fetchAllRows<any>(() => supabase.from("ims_sales_pending_snapshot").select("itemCode, qty, amount")),
     fetchAllRows<any>(() =>
       supabase
         .from("ims_serial_number")
@@ -79,14 +80,29 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
     fetchAllRows<any>(() =>
       supabase.from("ims_stock_ledger").select("itemCode, locationId, qty").eq("txnType", "OUT").gte("createdAt", cutoff)
     ),
+    fetchAllRows<any>(() => supabase.from("ims_item_master").select("itemCode, itemName, itemGroup, category, uom")),
+    fetchAllRows<any>(() => supabase.from("ims_location_master").select("id, locationCode, locationName")),
   ]);
 
   const key = (itemCode: string, locationId: string | null) => `${itemCode}::${locationId ?? ""}`;
 
+  const itemByCode = new Map(itemMasters.map((i: any) => [i.itemCode, i]));
+  const locationById = new Map(locationMasters.map((l: any) => [l.id, l]));
+  const settingByKey = new Map(locationSettings.map((s: any) => [key(s.itemCode, s.locationId), s]));
+
+  // Show a row for every item+location that has EITHER an explicit Max
+  // Level setting OR actual stock activity (transfer, serial, opening
+  // import, ...) — a location a CSV import never configured but that a
+  // Stock Transfer later moved stock into must still show up here.
+  const allKeys = new Map<string, { itemCode: string; locationId: string }>();
+  for (const s of locationSettings) allKeys.set(key(s.itemCode, s.locationId), { itemCode: s.itemCode, locationId: s.locationId });
+  for (const r of ledgerRows) if (r.locationId) allKeys.set(key(r.itemCode, r.locationId), { itemCode: r.itemCode, locationId: r.locationId });
+  for (const r of serialRows) if (r.currentLocationId) allKeys.set(key(r.itemCode, r.currentLocationId), { itemCode: r.itemCode, locationId: r.currentLocationId });
+
   const liveStockMap = new Map<string, number>();
   const transferInMap = new Map<string, number>();
   const transferOutMap = new Map<string, number>();
-  for (const r of ledgerRows || []) {
+  for (const r of ledgerRows) {
     const k = key(r.itemCode, r.locationId);
     liveStockMap.set(k, (liveStockMap.get(k) || 0) + signedLedgerQty(r.txnType, r.qty));
     if (r.txnType === "TRANSFER_IN") transferInMap.set(k, (transferInMap.get(k) || 0) + r.qty);
@@ -94,79 +110,83 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
   }
 
   const recentOutMap = new Map<string, number>();
-  for (const r of recentOutRows || []) {
+  for (const r of recentOutRows) {
     const k = key(r.itemCode, r.locationId);
     recentOutMap.set(k, (recentOutMap.get(k) || 0) + r.qty);
   }
 
-  const indentMap = new Map<string, { indentQty: number; poQty: number; receivedQty: number; intransitQty: number }>();
-  for (const r of indentPoRows || []) {
-    if (!r.itemCode) continue;
-    const k = key(r.itemCode, r.locationId);
-    const acc = indentMap.get(k) || { indentQty: 0, poQty: 0, receivedQty: 0, intransitQty: 0 };
-    acc.indentQty += r.indentQty || 0;
-    acc.poQty += r.poQty || 0;
-    acc.receivedQty += r.receivedQty || 0;
-    acc.intransitQty += r.intransitQty || 0;
-    indentMap.set(k, acc);
-  }
+  // Indent Raised / In-Transit / Lead Time — from PFMS's real pending-stage
+  // conditions (lib/sync-pfms.ts), one row per item+location, refreshed
+  // wholesale on every sync (see Database/06_pfms_pending_snapshot.sql).
+  const pfmsPendingByKey = new Map(pfmsPendingRows.map((r: any) => [key(r.itemCode, r.locationId), r]));
 
-  const salesMap = new Map<string, { qty: number; amount: number }>();
-  for (const r of salesRows || []) {
-    if (!r.itemCode) continue;
-    const k = key(r.itemCode, r.locationId);
-    const acc = salesMap.get(k) || { qty: 0, amount: 0 };
-    acc.qty += r.qty || 0;
-    acc.amount += r.amount || 0;
-    salesMap.set(k, acc);
-  }
+  // Total Sales Qty/Value — items sitting in OTP's Pre-Invoice PENDING
+  // queue (lib/sync-otp-pending-sales.ts). Item-level only; the queue
+  // doesn't carry a reliable warehouse location, so the same total applies
+  // to every location-row of that item.
+  const salesByItemCode = new Map(salesPendingRows.map((r: any) => [r.itemCode, r]));
 
-  const serialMap = new Map<string, { count: number; nearestExpiry: string | null }>();
-  for (const r of serialRows || []) {
+  const serialMap = new Map<string, { count: number; nearestWarrantyExpiry: string | null; nearestInvoiceDate: string | null }>();
+  for (const r of serialRows) {
     const k = key(r.itemCode, r.currentLocationId);
-    const acc = serialMap.get(k) || { count: 0, nearestExpiry: null };
+    const acc = serialMap.get(k) || { count: 0, nearestWarrantyExpiry: null, nearestInvoiceDate: null };
     acc.count += 1;
-    const expiry = r.warrantyExpiryDate ?? r.invoiceDate;
-    if (expiry && (!acc.nearestExpiry || expiry < acc.nearestExpiry)) acc.nearestExpiry = expiry;
+    if (r.warrantyExpiryDate && (!acc.nearestWarrantyExpiry || r.warrantyExpiryDate < acc.nearestWarrantyExpiry)) {
+      acc.nearestWarrantyExpiry = r.warrantyExpiryDate;
+    }
+    if (r.invoiceDate && (!acc.nearestInvoiceDate || r.invoiceDate < acc.nearestInvoiceDate)) {
+      acc.nearestInvoiceDate = r.invoiceDate;
+    }
     serialMap.set(k, acc);
   }
 
-  return (locationSettings || []).map((setting: any) => {
-    const k = key(setting.itemCode, setting.locationId);
+  const rows: InventoryRow[] = [];
+
+  for (const { itemCode, locationId } of allKeys.values()) {
+    const item = itemByCode.get(itemCode);
+    const location = locationById.get(locationId);
+    if (!item || !location) continue; // shouldn't happen given FK constraints, but stay defensive
+
+    const k = key(itemCode, locationId);
     const liveStock = liveStockMap.get(k) || 0;
-    const indent = indentMap.get(k) || { indentQty: 0, poQty: 0, receivedQty: 0, intransitQty: 0 };
-    const sales = salesMap.get(k) || { qty: 0, amount: 0 };
-    const serials = serialMap.get(k) || { count: 0, nearestExpiry: null };
+    const setting = settingByKey.get(k);
+    const maxLevel = setting?.maxLevel ?? null;
+    const maxLevelPeak = setting?.maxLevelPeak ?? null;
+
+    const pfmsPending = pfmsPendingByKey.get(k);
+    const indentRaisedQty = pfmsPending?.indentRaisedQty || 0;
+    const poQty = pfmsPending?.poQty || 0;
+    const materialInTransitQty = pfmsPending?.intransitQty || 0;
+    const leadTimeDays = pfmsPending?.leadTimeDays ?? null;
+
+    const sales = salesByItemCode.get(itemCode) || { qty: 0, amount: 0 };
+    const serials = serialMap.get(k) || { count: 0, nearestWarrantyExpiry: null, nearestInvoiceDate: null };
     const recentOutQty = recentOutMap.get(k) || 0;
 
-    const pendingPoQty = Math.max(0, indent.poQty - indent.receivedQty);
-    const targetQty = liveStock + indent.intransitQty;
-    const reorderQty = setting.maxLevel !== null ? setting.maxLevel - (liveStock + indent.indentQty) : null;
+    const targetQty = liveStock + materialInTransitQty;
+    const reorderQty = maxLevel !== null ? maxLevel - (liveStock + indentRaisedQty) : null;
 
     const status: InventoryRow["status"] =
       recentOutQty <= 0 ? "Non-Moving" : recentOutQty >= FAST_MOVING_MIN_OUT_QTY ? "Fast Moving" : "Slow Moving";
 
-    return {
-      itemCode: setting.itemCode,
-      itemName: setting.item.itemName,
-      itemGroup: setting.item.itemGroup,
-      category: setting.item.category,
-      uom: setting.item.uom,
-      locationCode: setting.location.locationCode,
-      locationName: setting.location.locationName,
+    rows.push({
+      itemCode,
+      itemName: item.itemName,
+      itemGroup: item.itemGroup,
+      category: item.category,
+      uom: item.uom,
+      locationCode: location.locationCode,
+      locationName: location.locationName,
 
       liveStock,
-      indentRaisedQty: indent.indentQty,
-      poQty: indent.poQty,
-      pendingPoQty,
-      materialInTransitQty: indent.intransitQty,
-      leadTimeDays: setting.item.defaultLeadTimeDays,
-
+      maxLevel,
+      maxLevelPeak,
+      indentRaisedQty,
+      poQty,
+      materialInTransitQty,
       targetQty,
-      maxLevel: setting.maxLevel,
       reorderQty,
-
-      status,
+      leadTimeDays,
 
       totalSalesQty: sales.qty,
       totalSalesValue: sales.amount,
@@ -175,7 +195,12 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
       stockTransferOutQty: transferOutMap.get(k) || 0,
 
       serialCount: serials.count,
-      nearestWarrantyExpiry: serials.nearestExpiry,
-    };
-  });
+      nearestWarrantyExpiry: serials.nearestWarrantyExpiry,
+      nearestInvoiceDate: serials.nearestInvoiceDate,
+
+      status,
+    });
+  }
+
+  return rows;
 }

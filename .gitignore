@@ -29,3 +29,10 @@ yarn-error.log*
 next-env.d.ts
 
 .claude/settings.local.json
+
+# Agent and Context files
+.mcp.json
+AGENTS.md
+CLAUDE.md
+CONTEXT.md
+response.json

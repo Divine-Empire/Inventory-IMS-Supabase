@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
           itemCode: row.itemCode,
           locationId,
           maxLevel: row.maxLevel,
+          maxLevelPeak: row.maxLevelPeak,
           avgSalePeak: row.avgSalePeak,
         },
         { onConflict: "itemCode,locationId" }

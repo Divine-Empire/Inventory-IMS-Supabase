@@ -1,6 +1,18 @@
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { salesDbSelect, inFilter } from "@/lib/sales-db";
 
+// Historical, ACCUMULATING record of actual completed/invoiced sales
+// (otp_make_invoice x lto_make_quotation_items rate) — distinct from
+// ims_sales_pending_snapshot (Inventory page's "Total Sales Qty/Value",
+// which is OTP's live Pre-Invoice PENDING queue and empties out as things
+// get invoiced). This table is the correct source for any month-over-month
+// / financial-year analysis (Seasonality, ABC-FSN) — see
+// lib/abc-fsn-analysis.ts.
+//
+// Batched upsert (not a per-row existence check + insert/update loop) —
+// see Database/09_sales_transaction_dedupe_key.sql for why a dedupeKey
+// column exists to make this possible.
+
 type OtpMakeInvoice = {
   id: string;
   order_id: string;
@@ -19,6 +31,7 @@ type LtoQuotationItem = {
 };
 
 const EXCLUDED_ITEM_NAMES = ["FREIGHT", "PACKAGING AND FORWARDING"];
+const BATCH_SIZE = 500;
 
 export async function syncSales() {
   const supabase = getSupabaseAdmin();
@@ -56,10 +69,11 @@ export async function syncSales() {
   const itemCodeSet = new Set((itemMasters || []).map((i) => i.itemCode.toUpperCase()));
   const itemCodeByName = new Map((itemMasters || []).map((i) => [i.itemName.toUpperCase().trim(), i.itemCode]));
 
-  let rowsUpserted = 0;
   let unmatchedOrder = 0;
   let unmatchedRate = 0;
   let unmatchedItem = 0;
+
+  const toUpsert: Record<string, any>[] = [];
 
   for (const invoice of invoices) {
     const quotationNo = quotationByOrderId.get(invoice.order_id);
@@ -92,39 +106,34 @@ export async function syncSales() {
       const qty = line.qty;
       const amount = rate * qty;
       const invoiceNo = invoice.invoice_number || invoice.id;
+      const itemNameRaw = line.item_name || null;
 
-      let existingQuery = supabase
-        .from("ims_sales_transaction")
-        .select("id")
-        .eq("quotationNo", quotationNo)
-        .eq("invoiceNo", invoiceNo);
-      existingQuery = itemCode ? existingQuery.eq("itemCode", itemCode) : existingQuery.eq("itemNameRaw", line.item_name || "");
-      const { data: existing } = await existingQuery.maybeSingle();
-
-      const data = {
+      toUpsert.push({
         quotationNo,
         itemCode,
-        itemNameRaw: line.item_name || null,
+        itemNameRaw,
         qty,
         rate,
         amount,
         invoiceNo,
         invoiceDate: invoice.invoice_date || null,
         sourceSystem: "OTP+LTO",
-      };
-
-      const { error: writeErr } = existing
-        ? await supabase.from("ims_sales_transaction").update(data).eq("id", existing.id)
-        : await supabase.from("ims_sales_transaction").insert(data);
-      if (writeErr) throw new Error(writeErr.message);
-
-      rowsUpserted++;
+        dedupeKey: itemCode || itemNameRaw || "",
+      });
     }
+  }
+
+  for (let i = 0; i < toUpsert.length; i += BATCH_SIZE) {
+    const batch = toUpsert.slice(i, i + BATCH_SIZE);
+    const { error } = await supabase
+      .from("ims_sales_transaction")
+      .upsert(batch, { onConflict: "quotationNo,invoiceNo,dedupeKey" });
+    if (error) throw new Error(`Batch upsert failed: ${error.message}`);
   }
 
   return {
     invoicesProcessed: invoices.length,
-    rowsUpserted,
+    rowsUpserted: toUpsert.length,
     unmatchedOrder,
     unmatchedRate,
     unmatchedItem,
