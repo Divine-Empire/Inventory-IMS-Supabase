@@ -37,6 +37,8 @@ export type ItemClassification = {
   abcClass: "A" | "B" | "C";
   fsnClass: "F" | "S" | "N";
   combinedClass: string;
+  monthlyValue: Record<string, number>;
+  monthlyQty: Record<string, number>;
 };
 
 export type ClassSummary = {
@@ -176,14 +178,15 @@ export async function getAbcFsnAnalysis() {
   });
 
   // ---------- Section 2/3: ABC-FSN per item (classifiable sales only) ----------
-  type ItemAgg = { salesValue: number; qtySold: number; monthlyQty: Map<string, number> };
+  type ItemAgg = { salesValue: number; qtySold: number; monthlyQty: Map<string, number>; monthlyValue: Map<string, number> };
   const itemAgg = new Map<string, ItemAgg>();
   for (const r of matchedToItem) {
     const code = r.itemCode!;
-    const agg = itemAgg.get(code) || { salesValue: 0, qtySold: 0, monthlyQty: new Map() };
+    const agg = itemAgg.get(code) || { salesValue: 0, qtySold: 0, monthlyQty: new Map(), monthlyValue: new Map() };
     agg.salesValue += r.amount || 0;
     agg.qtySold += r.qty || 0;
     agg.monthlyQty.set(r.monthKey, (agg.monthlyQty.get(r.monthKey) || 0) + (r.qty || 0));
+    agg.monthlyValue.set(r.monthKey, (agg.monthlyValue.get(r.monthKey) || 0) + (r.amount || 0));
     itemAgg.set(code, agg);
   }
 
@@ -222,6 +225,8 @@ export async function getAbcFsnAnalysis() {
       abcClass,
       fsnClass,
       combinedClass: `${abcClass}${fsnClass}`,
+      monthlyValue: Object.fromEntries(agg.monthlyValue),
+      monthlyQty: Object.fromEntries(agg.monthlyQty),
     };
   });
 
