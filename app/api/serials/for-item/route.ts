@@ -23,11 +23,21 @@ export async function GET(req: NextRequest) {
     if (locErr) throw new Error(locErr.message);
     if (!location) return NextResponse.json({ success: true, serials: [] });
 
+    // The Inventory row this button lives on is a rolled-up top-level
+    // location (see lib/inventory.ts) — its serial count already includes
+    // every sub-godown's serials, so this lookup must too, or CG would show
+    // a combined count but an empty/partial drill-down list.
+    const { data: children } = await supabase
+      .from("ims_location_master")
+      .select("id")
+      .eq("parentLocationId", location.id);
+    const locationIds = [location.id, ...(children || []).map((c) => c.id)];
+
     const { data: serials, error } = await supabase
       .from("ims_serial_number")
       .select("serialNo, status, warrantyExpiryDate, invoiceDate, inTxnId")
       .eq("itemCode", itemCode)
-      .eq("currentLocationId", location.id)
+      .in("currentLocationId", locationIds)
       .eq("status", "IN_STOCK")
       .order("warrantyExpiryDate", { ascending: true, nullsFirst: false });
     if (error) throw new Error(error.message);

@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { salesDbSelect, inFilter } from "@/lib/sales-db";
+import { resolveOtpDispatchLocationCode, resolveOtpSubGodownCode } from "@/lib/otp-location-aliases";
 
 // Historical, ACCUMULATING record of actual completed/invoiced sales
 // (otp_make_invoice x lto_make_quotation_items rate) — distinct from
@@ -18,10 +19,13 @@ type OtpMakeInvoice = {
   order_id: string;
   invoice_number: string | null;
   invoice_date: string | null;
+  pre_invoice_queue_id: string | null;
   items: { item_code?: string; item_name?: string; qty?: number }[] | null;
 };
 
 type OtpOrder = { id: string; quotation_number: string | null };
+
+type OtpPreInvoiceQueue = { id: string; dispatch_location: string | null; sub_godown: string | null };
 
 type LtoQuotationItem = {
   quotation_no: string;
@@ -36,10 +40,23 @@ const BATCH_SIZE = 500;
 export async function syncSales() {
   const supabase = getSupabaseAdmin();
 
+  const { data: locations, error: locErr } = await supabase.from("ims_location_master").select("id, locationCode");
+  if (locErr) throw new Error(locErr.message);
+  const locationIdByCode = new Map((locations || []).map((l) => [l.locationCode, l.id]));
+
   const invoices = await salesDbSelect<OtpMakeInvoice>(
     "otp_make_invoice",
-    "select=id,order_id,invoice_number,invoice_date,items"
+    "select=id,order_id,invoice_number,invoice_date,pre_invoice_queue_id,items"
   );
+
+  const queueIds = Array.from(new Set(invoices.map((i) => i.pre_invoice_queue_id).filter(Boolean))) as string[];
+  const queues = queueIds.length
+    ? await salesDbSelect<OtpPreInvoiceQueue>(
+        "otp_pre_invoice_queue",
+        `select=id,dispatch_location,sub_godown&id=in.${inFilter(queueIds)}`
+      )
+    : [];
+  const queueById = new Map(queues.map((q) => [q.id, q]));
 
   const orderIds = invoices.map((i) => i.order_id);
   const orders = orderIds.length
@@ -82,6 +99,15 @@ export async function syncSales() {
       continue;
     }
 
+    const queue = invoice.pre_invoice_queue_id ? queueById.get(invoice.pre_invoice_queue_id) : null;
+    // Prefer the sub-godown captured at Packing List (more precise — resolves
+    // straight to a CG child) over dispatch_location (captured later, at
+    // Pre-Invoice, coarser — top-level only).
+    const subGodownCode = resolveOtpSubGodownCode(queue?.sub_godown);
+    const dispatchLocationCode = resolveOtpDispatchLocationCode(queue?.dispatch_location);
+    const resolvedCode = subGodownCode ?? dispatchLocationCode;
+    const locationId = resolvedCode ? locationIdByCode.get(resolvedCode) ?? null : null;
+
     for (const line of invoice.items || []) {
       const nameUpper = (line.item_name || "").toUpperCase().trim();
       if (EXCLUDED_ITEM_NAMES.includes(nameUpper)) continue;
@@ -117,6 +143,7 @@ export async function syncSales() {
         amount,
         invoiceNo,
         invoiceDate: invoice.invoice_date || null,
+        locationId,
         sourceSystem: "OTP+LTO",
         dedupeKey: itemCode || itemNameRaw || "",
       });

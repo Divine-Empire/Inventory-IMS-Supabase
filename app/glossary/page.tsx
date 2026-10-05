@@ -13,8 +13,9 @@ const GROUPS: Group[] = [
     title: "Inventory Page - Columns",
     terms: [
       { term: "Live Stock", meaning: "Kitna actual stock abhi us location pe hai - IN/OUT/Transfer sab ledger entries ka running total." },
-      { term: "Max Level", meaning: "Normal (non-peak season) ke liye yeh item kitna stock me hona chahiye - CSV import se set hota hai." },
-      { term: "Max Level Peak", meaning: "Peak/busy season ke liye target stock level - Max Level se alag, zyada hota hai." },
+      { term: "CG (combined row)", meaning: "CG location ka row iske 4 sub-godowns (Warehouse, Maniquip, Service Inbound, Head Office) ka combined total dikhata hai - PFMS Material Received aur OTP Packing List se exact sub-godown track hota hai backend me, but Inventory page pe ek hi aggregated CG row dikhta hai." },
+      { term: "Max Level", meaning: "Off-season (Jun-Sep) ka target stock level - formula se calculate hota hai: Avg Sale/Day x Lead Time x Safety Factor x Growth Rate. Inventory page ke 'Max Level' button se recalculate hota hai." },
+      { term: "Max Level Peak", meaning: "Peak season (Oct-May) ka target stock level - same formula, lekin sirf Oct-May ke sales data se Avg Sale/Day nikalta hai." },
       { term: "Indent Raised", meaning: "PFMS me is item ke liye kitni qty approve ho chuki hai lekin abhi PO/vendor stage pe process ho rahi hai." },
       { term: "PO Qty", meaning: "PO ban chuka hai is item ke liye, lekin vendor se abhi poori qty lift/dispatch nahi hui - outstanding purchase order qty." },
       { term: "In-Transit Qty", meaning: "Vendor ne dispatch kar diya hai, lekin transporter abhi 'received' mark nahi kiya - raaste me hai." },

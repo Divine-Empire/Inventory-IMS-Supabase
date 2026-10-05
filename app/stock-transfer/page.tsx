@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 
-const LOCATIONS = ["CG", "NE", "MANIQUIP", "HO"];
+const LOCATIONS = ["CG", "NE", "WB", "OD", "CG-WAREHOUSE", "MANIQUIP", "CG-SERVICE-INBOUND", "HO"];
 
 type TransferItem = { id: string; itemCode: string; qty: number; serialNumbers: string[] };
 type Transfer = {

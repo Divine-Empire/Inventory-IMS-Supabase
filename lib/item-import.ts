@@ -1,12 +1,19 @@
 export const LOCATIONS = [
   { code: "CG", name: "CG" },
   { code: "NE", name: "NE" },
+  { code: "WB", name: "West Bengal" },
+  { code: "OD", name: "Odisha" },
+  { code: "CG-WAREHOUSE", name: "Warehouse" },
   { code: "MANIQUIP", name: "Maniquip" },
+  { code: "CG-SERVICE-INBOUND", name: "Service Inbound" },
   { code: "HO", name: "Head Office" },
 ] as const;
 
 export const LOCATION_CODES = LOCATIONS.map((l) => l.code);
 
+// MAX LEVEL / MAX LEVEL (PEAK) / AVG SALE (PEAK) are no longer imported from
+// CSV — they're system-calculated (see lib/max-level-calc.ts) from actual
+// sales history + lead time via the "Max Level" button on the Inventory page.
 export const ITEM_IMPORT_HEADERS = [
   "GROUP",
   "CATEGORY",
@@ -14,9 +21,6 @@ export const ITEM_IMPORT_HEADERS = [
   "NAME OF ITEM",
   "IMAGE",
   "LOCATION",
-  "AVG SALE (PEAK)",
-  "MAX LEVEL",
-  "MAX LEVEL (PEAK)",
   "LIVE STOCK",
 ] as const;
 
@@ -27,9 +31,6 @@ export type ItemImportRow = {
   itemName: string;
   imageUrl: string;
   locationCode: string;
-  avgSalePeak: number | null;
-  maxLevel: number | null;
-  maxLevelPeak: number | null;
   liveStock: number | null;
 };
 
@@ -67,9 +68,6 @@ export function parseItemImportRow(
       itemName,
       imageUrl: (raw["IMAGE"] || "").trim(),
       locationCode,
-      avgSalePeak: toNumberOrNull(raw["AVG SALE (PEAK)"]),
-      maxLevel: toNumberOrNull(raw["MAX LEVEL"]),
-      maxLevelPeak: toNumberOrNull(raw["MAX LEVEL (PEAK)"]),
       liveStock: toNumberOrNull(raw["LIVE STOCK"]),
     },
     error: null,

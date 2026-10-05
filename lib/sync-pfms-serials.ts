@@ -1,5 +1,5 @@
 import { getSupabaseAdmin, fetchAllRows } from "@/lib/supabase";
-import { resolvePfmsLocationCode } from "@/lib/pfms-location-aliases";
+import { resolvePfmsLocationCode, resolvePfmsGodownCode } from "@/lib/pfms-location-aliases";
 
 // Pulls newly-generated serials from PFMS's Serial Generation stage
 // (pfms_serial-number) into our own ims_serial_number + an "IN" stock
@@ -37,8 +37,8 @@ export async function syncPfmsSerials() {
     fetchAllRows<{ indentNo: string; itemCode: string | null; warehouseLocation: string | null }>(() =>
       supabase.from("pfms_indent_generation").select("indentNo, itemCode, warehouseLocation")
     ),
-    fetchAllRows<{ liftNo: string; invoiceDate: string | null }>(() =>
-      supabase.from("pfms_material-received").select("liftNo, invoiceDate")
+    fetchAllRows<{ liftNo: string; invoiceDate: string | null; godownLocation: string | null }>(() =>
+      supabase.from("pfms_material-received").select("liftNo, invoiceDate, godownLocation")
     ),
     fetchAllRows<{ id: string; locationCode: string }>(() => supabase.from("ims_location_master").select("id, locationCode")),
     fetchAllRows<{ itemCode: string }>(() => supabase.from("ims_item_master").select("itemCode")),
@@ -48,6 +48,7 @@ export async function syncPfmsSerials() {
   const indentNoByLift = new Map(lifts.map((l) => [l.liftNo, l.indentNo]));
   const indentByNo = new Map(indents.map((i) => [i.indentNo, i]));
   const invoiceDateByLift = new Map(materialReceived.map((m) => [m.liftNo, m.invoiceDate]));
+  const materialReceivedByLift = new Map(materialReceived.map((m) => [m.liftNo, m]));
   const locationByCode = new Map(locations.map((l) => [l.locationCode, l.id]));
   const ourItemCodes = new Set(ourItems.map((i) => i.itemCode));
 
@@ -77,7 +78,10 @@ export async function syncPfmsSerials() {
       continue;
     }
 
-    const locationCode = resolvePfmsLocationCode(indent.warehouseLocation);
+    // Prefer the exact CG sub-godown captured at Material Received (more
+    // precise) over the indent's top-level warehouse (coarse, unchanged).
+    const godownCode = resolvePfmsGodownCode(materialReceivedByLift.get(row.liftNo)?.godownLocation);
+    const locationCode = godownCode ?? resolvePfmsLocationCode(indent.warehouseLocation);
     const locationId = locationCode ? locationByCode.get(locationCode) : undefined;
     if (!locationId) {
       unmatchedLocation++;

@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, AlertCircle, Download, Upload, ChevronDown, ChevronUp, List, X } from "lucide-react";
+import { Loader2, RefreshCw, AlertCircle, Download, Upload, ChevronDown, ChevronUp, List, X, Calculator } from "lucide-react";
 import { toast } from "sonner";
 import { MainLayout } from "@/components/layout/main-layout";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 type InventoryRow = {
   itemCode: string;
@@ -370,6 +374,9 @@ const SYNC_TYPES = {
 
 type SyncType = keyof typeof SYNC_TYPES;
 
+const DEFAULT_SAFETY_FACTOR = 1.2;
+const DEFAULT_GROWTH_RATE = 1.1;
+
 function ImportAndSyncBar({ onDataChanged }: { onDataChanged: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -377,6 +384,11 @@ function ImportAndSyncBar({ onDataChanged }: { onDataChanged: () => void }) {
   const [syncing, setSyncing] = useState<SyncType | null>(null);
   const [lastSync, setLastSync] = useState<{ label: string; summary: Record<string, number> } | null>(null);
   const [expanded, setExpanded] = useState(false);
+
+  const [maxLevelDialogOpen, setMaxLevelDialogOpen] = useState(false);
+  const [safetyFactor, setSafetyFactor] = useState(String(DEFAULT_SAFETY_FACTOR));
+  const [growthRate, setGrowthRate] = useState(String(DEFAULT_GROWTH_RATE));
+  const [recalculating, setRecalculating] = useState(false);
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -424,6 +436,31 @@ function ImportAndSyncBar({ onDataChanged }: { onDataChanged: () => void }) {
     }
   };
 
+  const runMaxLevelRecalc = async () => {
+    setRecalculating(true);
+    try {
+      const res = await fetch("/api/items/recalculate-max-level", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          safetyFactor: safetyFactor.trim() ? Number(safetyFactor) : undefined,
+          growthRate: growthRate.trim() ? Number(growthRate) : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+      toast.success(
+        `Max Level recalculated — ${data.summary.itemLocationsUpdated}/${data.summary.itemLocationsConsidered} item-location(s) updated`
+      );
+      setMaxLevelDialogOpen(false);
+      onDataChanged();
+    } catch (err: any) {
+      toast.error(err.message || "Max Level recalculation failed");
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
   return (
     <div className="border border-slate-300 rounded-lg bg-white">
       <div className="flex flex-wrap items-center gap-2 p-3">
@@ -445,6 +482,64 @@ function ImportAndSyncBar({ onDataChanged }: { onDataChanged: () => void }) {
           {uploading ? "Importing..." : "Import CSV"}
         </button>
         <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelected} />
+
+        <button
+          type="button"
+          onClick={() => setMaxLevelDialogOpen(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-xs font-semibold text-emerald-800"
+        >
+          <Calculator className="w-3.5 h-3.5" />
+          Max Level
+        </button>
+
+        <Dialog open={maxLevelDialogOpen} onOpenChange={setMaxLevelDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Recalculate Max Level / Max Level Peak</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col gap-4 py-2">
+              <p className="text-xs text-slate-500">
+                Formula: Average Sale/Day (per item+location, seasonal) × Lead Time (days, from system) × Safety
+                Factor × Growth Rate. Max Level uses Jun-Sep sales, Max Level Peak uses Oct-May sales. Lead Time is
+                always taken from the system per item — it can't be overridden here, since one number for every item
+                would be wrong for most of them.
+              </p>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="safetyFactor">Safety Factor</Label>
+                <Input
+                  id="safetyFactor"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={safetyFactor}
+                  onChange={(e) => setSafetyFactor(e.target.value)}
+                  placeholder={String(DEFAULT_SAFETY_FACTOR)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="growthRate">Growth Rate</Label>
+                <Input
+                  id="growthRate"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={growthRate}
+                  onChange={(e) => setGrowthRate(e.target.value)}
+                  placeholder={String(DEFAULT_GROWTH_RATE)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setMaxLevelDialogOpen(false)} disabled={recalculating}>
+                Cancel
+              </Button>
+              <Button onClick={runMaxLevelRecalc} disabled={recalculating}>
+                {recalculating ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
+                {recalculating ? "Calculating..." : "Recalculate"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="w-px h-5 bg-slate-200 mx-1" />
 

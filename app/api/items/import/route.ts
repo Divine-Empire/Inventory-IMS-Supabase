@@ -78,21 +78,26 @@ export async function POST(req: NextRequest) {
 
       const locationId = locationByCode.get(row.locationCode)!;
 
-      const { error: settingErr } = await supabase.from("ims_item_location_setting").upsert(
-        {
-          itemCode: row.itemCode,
-          locationId,
-          maxLevel: row.maxLevel,
-          maxLevelPeak: row.maxLevelPeak,
-          avgSalePeak: row.avgSalePeak,
-        },
-        { onConflict: "itemCode,locationId" }
-      );
-      if (settingErr) {
-        errors.push(`Row ${i + 2}: ${settingErr.message}`);
-        continue;
+      // Only CREATE the location-setting row if it doesn't exist yet — never
+      // overwrite maxLevel/maxLevelPeak on re-import, since those are now
+      // system-calculated (lib/max-level-calc.ts), not CSV-driven.
+      const { data: existingSetting } = await supabase
+        .from("ims_item_location_setting")
+        .select("itemCode")
+        .eq("itemCode", row.itemCode)
+        .eq("locationId", locationId)
+        .maybeSingle();
+
+      if (!existingSetting) {
+        const { error: settingErr } = await supabase
+          .from("ims_item_location_setting")
+          .insert({ itemCode: row.itemCode, locationId });
+        if (settingErr) {
+          errors.push(`Row ${i + 2}: ${settingErr.message}`);
+          continue;
+        }
+        locationSettingsUpserted++;
       }
-      locationSettingsUpserted++;
 
       if (row.liveStock !== null && row.liveStock !== 0) {
         const { data: alreadyOpened } = await supabase
