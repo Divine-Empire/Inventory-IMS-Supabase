@@ -1,10 +1,31 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, AlertCircle, Download, Upload, ChevronDown, ChevronUp, List, X, Calculator } from "lucide-react";
+import {
+  Loader2,
+  RefreshCw,
+  Download,
+  Upload,
+  List,
+  X,
+  Calculator,
+  ChevronDown,
+  AlertTriangle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { MainLayout } from "@/components/layout/main-layout";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { PageHeader } from "@/components/layout/page-header";
+import { DataTable, defaultColumnVisibility, type ColumnVisibility, type DataColumn } from "@/components/data/data-table";
+import { ColumnSelector } from "@/components/data/column-selector";
+import { FilterSelect, FilterToolbar, type FilterChip } from "@/components/data/filter-toolbar";
+import { StatusBadge, type StatusTone } from "@/components/data/status-badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -18,6 +39,8 @@ type InventoryRow = {
   locationCode: string;
   locationName: string;
   liveStock: number;
+  reservedQty: number;
+  freeQty: number;
   maxLevel: number | null;
   maxLevelPeak: number | null;
   indentRaisedQty: number;
@@ -51,11 +74,13 @@ type ImportResult = {
   error?: string;
 };
 
-const STATUS_STYLES: Record<InventoryRow["status"], string> = {
-  "Fast Moving": "bg-emerald-100 text-emerald-800 border-emerald-300",
-  "Slow Moving": "bg-amber-100 text-amber-800 border-amber-300",
-  "Non-Moving": "bg-slate-200 text-slate-700 border-slate-300",
+const STATUS_TONE: Record<InventoryRow["status"], StatusTone> = {
+  "Fast Moving": "success",
+  "Slow Moving": "warning",
+  "Non-Moving": "neutral",
 };
+
+const formatDate = (d: string | null) => (d ? new Date(d).toLocaleDateString("en-IN") : "-");
 
 export default function InventoryPage() {
   return (
@@ -73,8 +98,8 @@ function InventoryContent() {
 
   const [filters, setFilters] = useState({ location: "All", status: "All", search: "" });
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/inventory?_t=${Date.now()}`);
@@ -91,6 +116,18 @@ function InventoryContent() {
 
   useEffect(() => {
     fetchData();
+    // Background auto-refresh: the server re-syncs PFMS Pending / OTP Pre-Invoice
+    // Sales only if they are older than 30 min, so this is almost always a no-op.
+    // Failures are silent — the manual Sync buttons still work.
+    fetch("/api/sync/auto", { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success && data.changed) {
+          fetchData(true);
+          toast.success("Pending & sales data auto-refreshed");
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const locations = useMemo(
@@ -109,181 +146,239 @@ function InventoryContent() {
     });
   }, [rows, filters]);
 
-  return (
-    <div className="p-6 flex flex-col gap-4 max-w-[1800px] mx-auto">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-1.5 h-8 bg-blue-600 rounded-full" />
-          <h1 className="text-xl font-extrabold text-slate-900 uppercase tracking-wide">Item-wise Inventory</h1>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            className="text-xs font-bold border border-slate-300 rounded-full px-3 py-1.5 bg-slate-50"
-            value={filters.location}
-            onChange={(e) => setFilters((f) => ({ ...f, location: e.target.value }))}
-          >
-            <option value="All">All Locations</option>
-            {locations.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </select>
-
-          <select
-            className="text-xs font-bold border border-slate-300 rounded-full px-3 py-1.5 bg-slate-50"
-            value={filters.status}
-            onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-          >
-            <option value="All">All Status</option>
-            <option value="Fast Moving">Fast Moving</option>
-            <option value="Slow Moving">Slow Moving</option>
-            <option value="Non-Moving">Non-Moving</option>
-          </select>
-
-          <input
-            type="text"
-            placeholder="Search item code/name..."
-            className="text-xs font-semibold border border-slate-300 rounded-full px-3 py-1.5 w-56"
-            value={filters.search}
-            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-          />
-
-          <button
-            onClick={fetchData}
-            className="inline-flex items-center gap-1.5 text-xs font-bold border border-slate-300 rounded-full px-3 py-1.5 bg-white hover:bg-slate-50"
-          >
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
-          </button>
-
-          <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1.5">
-            {filteredRows.length} rows
+  const columns = useMemo<DataColumn<InventoryRow>[]>(
+    () => [
+      {
+        id: "itemCode",
+        header: "Item Code",
+        sticky: true,
+        width: 120,
+        sortValue: (r) => r.itemCode,
+        cell: (r) => <span className="font-mono font-semibold text-brand-700">{r.itemCode}</span>,
+      },
+      {
+        id: "itemName",
+        header: "Item Name",
+        sticky: "lg",
+        width: 260,
+        wrap: true,
+        sortValue: (r) => r.itemName,
+        cell: (r) => (
+          <span className="line-clamp-2 font-medium" title={r.itemName}>
+            {r.itemName}
           </span>
-        </div>
-      </div>
-
-      <ImportAndSyncBar onDataChanged={fetchData} />
-
-      {loading ? (
-        <div className="flex flex-col items-center justify-center h-[50vh] gap-4">
-          <Loader2 className="w-10 h-10 animate-spin text-slate-800" />
-          <p className="text-slate-900 font-semibold animate-pulse">Loading inventory...</p>
-        </div>
-      ) : error ? (
-        <div className="border border-red-300 bg-red-50 rounded-lg p-6 flex flex-col items-center gap-3">
-          <AlertCircle className="w-10 h-10 text-red-600" />
-          <p className="text-sm font-semibold text-red-800">{error}</p>
-          <button
-            onClick={fetchData}
-            className="px-4 py-2 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold"
+        ),
+      },
+      { id: "location", header: "Location", width: 90, sortValue: (r) => r.locationCode, cell: (r) => r.locationCode },
+      {
+        id: "liveStock",
+        header: "Live Stock",
+        align: "right",
+        sortValue: (r) => r.liveStock,
+        cell: (r) => <span className="font-semibold text-brand-800">{r.liveStock}</span>,
+      },
+      {
+        id: "reserved",
+        header: "Reserved",
+        align: "right",
+        sortValue: (r) => r.reservedQty,
+        cell: (r) => (
+          <span className={r.reservedQty > 0 ? "font-medium text-warning" : "text-muted-foreground"}>{r.reservedQty}</span>
+        ),
+      },
+      {
+        id: "free",
+        header: "Free",
+        align: "right",
+        sortValue: (r) => r.freeQty,
+        cell: (r) =>
+          r.freeQty < 0 ? (
+            <span className="inline-flex items-center gap-1 font-semibold text-danger">
+              <AlertTriangle className="h-3 w-3" aria-hidden />
+              {r.freeQty}
+            </span>
+          ) : (
+            <span className="font-semibold">{r.freeQty}</span>
+          ),
+      },
+      { id: "maxLevel", header: "Max Level", align: "right", sortValue: (r) => r.maxLevel, cell: (r) => r.maxLevel ?? "-" },
+      {
+        id: "maxLevelPeak",
+        header: "Max Level Peak",
+        align: "right",
+        sortValue: (r) => r.maxLevelPeak,
+        cell: (r) => r.maxLevelPeak ?? "-",
+      },
+      { id: "indentRaised", header: "Indent Raised", align: "right", sortValue: (r) => r.indentRaisedQty, cell: (r) => r.indentRaisedQty },
+      { id: "poQty", header: "PO Qty", align: "right", sortValue: (r) => r.poQty, cell: (r) => r.poQty },
+      {
+        id: "inTransit",
+        header: "In-Transit Qty",
+        align: "right",
+        sortValue: (r) => r.materialInTransitQty,
+        cell: (r) => r.materialInTransitQty,
+      },
+      {
+        id: "target",
+        header: "Target Qty",
+        align: "right",
+        sortValue: (r) => r.targetQty,
+        cell: (r) => <span className="font-semibold">{r.targetQty}</span>,
+      },
+      {
+        id: "reorder",
+        header: "Reorder Qty",
+        align: "right",
+        sortValue: (r) => r.reorderQty,
+        cell: (r) =>
+          r.reorderQty === null ? (
+            "-"
+          ) : r.reorderQty > 0 ? (
+            <span className="inline-flex items-center gap-1 font-semibold text-danger">
+              <AlertTriangle className="h-3 w-3" aria-hidden />
+              {r.reorderQty}
+            </span>
+          ) : (
+            <span className="font-semibold text-success">{r.reorderQty}</span>
+          ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        sortValue: (r) => r.status,
+        cell: (r) => <StatusBadge tone={STATUS_TONE[r.status]}>{r.status}</StatusBadge>,
+      },
+      { id: "leadTime", header: "Lead Time (d)", align: "right", sortValue: (r) => r.leadTimeDays, cell: (r) => r.leadTimeDays ?? "-" },
+      { id: "salesQty", header: "Total Sales Qty", align: "right", sortValue: (r) => r.totalSalesQty, cell: (r) => r.totalSalesQty },
+      {
+        id: "salesValue",
+        header: "Total Sales Value",
+        align: "right",
+        sortValue: (r) => r.totalSalesValue,
+        cell: (r) => <span className="font-medium">₹{r.totalSalesValue.toLocaleString("en-IN")}</span>,
+      },
+      { id: "transferIn", header: "Transfer IN", align: "right", sortValue: (r) => r.stockTransferInQty, cell: (r) => r.stockTransferInQty },
+      { id: "transferOut", header: "Transfer OUT", align: "right", sortValue: (r) => r.stockTransferOutQty, cell: (r) => r.stockTransferOutQty },
+      {
+        id: "serials",
+        header: "Serials of Live Stock",
+        align: "center",
+        sortValue: (r) => r.serialCount,
+        cell: (r) => (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 border-brand-200 px-2 text-brand-700 hover:bg-brand-50"
+            disabled={r.serialCount === 0}
+            aria-label={`View ${r.serialCount} serial numbers for ${r.itemCode} at ${r.locationCode}`}
+            onClick={() => setSerialsModalFor({ itemCode: r.itemCode, itemName: r.itemName, locationCode: r.locationCode })}
           >
-            Try Again
-          </button>
-        </div>
-      ) : (
-        <div className="border border-slate-300 rounded-lg bg-white overflow-auto max-h-[70vh]">
-          <table className="w-full text-sm border-collapse">
-            <thead className="sticky top-0 bg-slate-100 z-10">
-              <tr className="text-left text-[11px] uppercase tracking-wide text-slate-600 font-extrabold whitespace-nowrap">
-                <Th>Item Code</Th>
-                <Th className="min-w-[260px]">Item Name</Th>
-                <Th>Location</Th>
-                <Th>Live Stock</Th>
-                <Th>Max Level</Th>
-                <Th>Max Level Peak</Th>
-                <Th>Indent Raised</Th>
-                <Th>PO Qty</Th>
-                <Th>In-Transit Qty</Th>
-                <Th>Target Qty</Th>
-                <Th>Reorder Qty</Th>
-                <Th>Status</Th>
-                <Th>Lead Time (d)</Th>
-                <Th>Total Sales Qty</Th>
-                <Th>Total Sales Value</Th>
-                <Th>Transfer IN</Th>
-                <Th>Transfer OUT</Th>
-                <Th>Serials of Live Stock</Th>
-                <Th>Nearest Warranty Expiry</Th>
-                <Th>Nearest Invoice Date</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredRows.length === 0 ? (
-                <tr>
-                  <td colSpan={20} className="text-center py-10 text-slate-500 font-semibold">
-                    No matching records
-                  </td>
-                </tr>
-              ) : (
-                filteredRows.map((r) => (
-                  <tr key={`${r.itemCode}-${r.locationCode}`} className="hover:bg-slate-50 whitespace-nowrap">
-                    <Td className="font-mono font-bold">{r.itemCode}</Td>
-                    <Td className="whitespace-normal break-words font-semibold text-slate-800">{r.itemName}</Td>
-                    <Td className="font-bold">{r.locationCode}</Td>
-                    <Td className="text-center font-bold">{r.liveStock}</Td>
-                    <Td className="text-center">{r.maxLevel ?? "-"}</Td>
-                    <Td className="text-center">{r.maxLevelPeak ?? "-"}</Td>
-                    <Td className="text-center">{r.indentRaisedQty}</Td>
-                    <Td className="text-center">{r.poQty}</Td>
-                    <Td className="text-center">{r.materialInTransitQty}</Td>
-                    <Td className="text-center font-bold">{r.targetQty}</Td>
-                    <Td className={`text-center font-bold ${r.reorderQty !== null && r.reorderQty > 0 ? "text-red-600" : "text-emerald-700"}`}>
-                      {r.reorderQty ?? "-"}
-                    </Td>
-                    <Td>
-                      <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${STATUS_STYLES[r.status]}`}>
-                        {r.status}
-                      </span>
-                    </Td>
-                    <Td className="text-center">{r.leadTimeDays ?? "-"}</Td>
-                    <Td className="text-center">{r.totalSalesQty}</Td>
-                    <Td className="text-right font-semibold">₹{r.totalSalesValue.toLocaleString("en-IN")}</Td>
-                    <Td className="text-center">{r.stockTransferInQty}</Td>
-                    <Td className="text-center">{r.stockTransferOutQty}</Td>
-                    <Td className="text-center">
-                      <button
-                        onClick={() => setSerialsModalFor({ itemCode: r.itemCode, itemName: r.itemName, locationCode: r.locationCode })}
-                        disabled={r.serialCount === 0}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <List className="w-3 h-3" /> {r.serialCount}
-                      </button>
-                    </Td>
-                    <Td className="text-center">
-                      {r.nearestWarrantyExpiry ? new Date(r.nearestWarrantyExpiry).toLocaleDateString("en-IN") : "-"}
-                    </Td>
-                    <Td className="text-center">
-                      {r.nearestInvoiceDate ? new Date(r.nearestInvoiceDate).toLocaleDateString("en-IN") : "-"}
-                    </Td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+            <List className="h-3 w-3" aria-hidden /> {r.serialCount}
+          </Button>
+        ),
+      },
+      {
+        id: "warranty",
+        header: "Nearest Warranty Expiry",
+        align: "center",
+        sortValue: (r) => r.nearestWarrantyExpiry,
+        cell: (r) => formatDate(r.nearestWarrantyExpiry),
+      },
+      {
+        id: "invoiceDate",
+        header: "Nearest Invoice Date",
+        align: "center",
+        sortValue: (r) => r.nearestInvoiceDate,
+        cell: (r) => formatDate(r.nearestInvoiceDate),
+      },
+    ],
+    []
+  );
+
+  const [visibility, setVisibility] = useState<ColumnVisibility>(() => defaultColumnVisibility(columns));
+
+  const chips: FilterChip[] = [];
+  if (filters.location !== "All")
+    chips.push({ key: "location", label: `Location: ${filters.location}`, onRemove: () => setFilters((f) => ({ ...f, location: "All" })) });
+  if (filters.status !== "All")
+    chips.push({ key: "status", label: `Status: ${filters.status}`, onRemove: () => setFilters((f) => ({ ...f, status: "All" })) });
+  if (filters.search.trim())
+    chips.push({ key: "search", label: `Search: ${filters.search.trim()}`, onRemove: () => setFilters((f) => ({ ...f, search: "" })) });
+  const clearAll = () => setFilters({ location: "All", status: "All", search: "" });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <ImportAndSyncBar
+        onDataChanged={() => fetchData()}
+        description={loading ? "Loading..." : `${filteredRows.length} of ${rows.length} item-location rows`}
+      />
+
+      <FilterToolbar
+        search={{
+          value: filters.search,
+          onChange: (v) => setFilters((f) => ({ ...f, search: v })),
+          placeholder: "Search item code or name",
+        }}
+        filters={
+          <>
+            <FilterSelect
+              label="Location"
+              value={filters.location}
+              onChange={(v) => setFilters((f) => ({ ...f, location: v }))}
+              allLabel="All locations"
+              options={locations.map((l) => ({ value: l, label: l }))}
+            />
+            <FilterSelect
+              label="Status"
+              value={filters.status}
+              onChange={(v) => setFilters((f) => ({ ...f, status: v }))}
+              allLabel="All statuses"
+              options={(Object.keys(STATUS_TONE) as InventoryRow["status"][]).map((s) => ({ value: s, label: s }))}
+            />
+          </>
+        }
+        trailing={
+          <>
+            <ColumnSelector columns={columns} visibility={visibility} onChange={setVisibility} />
+            <Button variant="outline" size="sm" className="h-9" onClick={() => fetchData()} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
+              Refresh
+            </Button>
+          </>
+        }
+        chips={chips}
+        onClearAll={clearAll}
+      />
+
+      <DataTable
+        label="Item-wise inventory"
+        columns={columns}
+        rows={filteredRows}
+        getRowId={(r) => `${r.itemCode}-${r.locationCode}`}
+        visibility={visibility}
+        loading={loading}
+        error={error}
+        onRetry={() => fetchData()}
+        empty={
+          rows.length === 0
+            ? {
+                title: "No inventory yet",
+                description: "Import the item CSV or run a sync from the Sync data menu to load stock.",
+              }
+            : {
+                title: "No rows match your filters",
+                description: "Try a different search or clear the filters.",
+                action: (
+                  <Button variant="outline" size="sm" onClick={clearAll}>
+                    Clear all filters
+                  </Button>
+                ),
+              }
+        }
+      />
 
       {serialsModalFor && <SerialsModal target={serialsModalFor} onClose={() => setSerialsModalFor(null)} />}
     </div>
-  );
-}
-
-function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <th className={`px-3 py-2.5 border-r border-slate-200 bg-slate-100 ${className}`}>{children}</th>;
-}
-
-function Td({
-  children,
-  className = "",
-  title,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  title?: string;
-}) {
-  return (
-    <td className={`px-3 py-2.5 border-r border-slate-100 ${className}`} title={title}>
-      {children}
-    </td>
   );
 }
 
@@ -311,57 +406,45 @@ function SerialsModal({
   }, [target]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-          <div>
-            <h2 className="text-sm font-extrabold text-slate-900">Serials in Stock — {target.locationCode}</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              <span className="font-mono font-bold">{target.itemCode}</span> — {target.itemName}
-            </p>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Serials in stock · {target.locationCode}</DialogTitle>
+          <DialogDescription>
+            <span className="font-mono font-medium text-foreground">{target.itemCode}</span> · {target.itemName}
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="overflow-auto flex-1">
+        <div className="max-h-[60vh] overflow-auto rounded-md border">
           {loading ? (
-            <div className="flex items-center justify-center py-10">
-              <Loader2 className="w-6 h-6 animate-spin text-slate-500" />
+            <div className="flex items-center justify-center py-10" role="status">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Loading serials" />
             </div>
           ) : serials.length === 0 ? (
-            <p className="text-center py-10 text-sm text-slate-500">No serials in stock</p>
+            <p className="py-10 text-center text-sm text-muted-foreground">No serials in stock</p>
           ) : (
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50 sticky top-0">
-                <tr className="text-left text-[10px] uppercase tracking-wide text-slate-500 font-bold">
-                  <th className="px-4 py-2">Serial No</th>
-                  <th className="px-4 py-2">Lift No (INN source)</th>
-                  <th className="px-4 py-2">Warranty/Invoice Date</th>
+            <table className="w-full border-separate border-spacing-0 text-[13px]">
+              <thead>
+                <tr className="text-left text-xs font-medium text-muted-foreground">
+                  <th scope="col" className="sticky top-0 border-b bg-secondary px-3 py-2">Serial No</th>
+                  <th scope="col" className="sticky top-0 border-b bg-secondary px-3 py-2">Lift No (INN source)</th>
+                  <th scope="col" className="sticky top-0 border-b bg-secondary px-3 py-2">Warranty / Invoice Date</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {serials.map((s) => (
                   <tr key={s.serialNo}>
-                    <td className="px-4 py-2 font-mono font-semibold">{s.serialNo}</td>
-                    <td className="px-4 py-2 font-mono">{s.liftNo ?? "-"}</td>
-                    <td className="px-4 py-2">
-                      {(s.warrantyExpiryDate ?? s.invoiceDate)
-                        ? new Date((s.warrantyExpiryDate ?? s.invoiceDate)!).toLocaleDateString("en-IN")
-                        : "-"}
-                    </td>
+                    <td className="border-b px-3 py-2 font-mono font-medium">{s.serialNo}</td>
+                    <td className="border-b px-3 py-2 font-mono">{s.liftNo ?? "-"}</td>
+                    <td className="border-b px-3 py-2">{formatDate(s.warrantyExpiryDate ?? s.invoiceDate)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -370,6 +453,7 @@ const SYNC_TYPES = {
   "otp-pending-sales": { label: "OTP Pre-Invoice Sales", endpoint: "otp-pending-sales" },
   "pfms-serials": { label: "PFMS Serial IN", endpoint: "pfms-serials" },
   "pfms-returns": { label: "PFMS Purchase Return", endpoint: "pfms-returns" },
+  "otp-reservations": { label: "Reconcile OTP Reservations", endpoint: "otp-reservations" },
 } as const;
 
 type SyncType = keyof typeof SYNC_TYPES;
@@ -377,7 +461,7 @@ type SyncType = keyof typeof SYNC_TYPES;
 const DEFAULT_SAFETY_FACTOR = 1.2;
 const DEFAULT_GROWTH_RATE = 1.1;
 
-function ImportAndSyncBar({ onDataChanged }: { onDataChanged: () => void }) {
+function ImportAndSyncBar({ onDataChanged, description }: { onDataChanged: () => void; description: string }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -461,126 +545,139 @@ function ImportAndSyncBar({ onDataChanged }: { onDataChanged: () => void }) {
     }
   };
 
+  const hasResult = !!(importResult?.summary || lastSync);
+
   return (
-    <div className="border border-slate-300 rounded-lg bg-white">
-      <div className="flex flex-wrap items-center gap-2 p-3">
-        <a
-          href="/api/items/template"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-800"
-        >
-          <Download className="w-3.5 h-3.5" />
-          Download Template
-        </a>
+    <>
+      <PageHeader
+        title="Item-wise Inventory"
+        description={description}
+        actions={
+          <>
+            <Button variant="ghost" size="sm" className="h-9" asChild>
+              <a href="/api/items/template">
+                <Download className="h-4 w-4" aria-hidden />
+                Download template
+              </a>
+            </Button>
 
-        <button
-          type="button"
-          disabled={uploading}
-          onClick={() => fileInputRef.current?.click()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-xs font-semibold text-white"
-        >
-          {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-          {uploading ? "Importing..." : "Import CSV"}
-        </button>
-        <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelected} />
+            <Button variant="outline" size="sm" className="h-9" disabled={uploading} onClick={() => fileInputRef.current?.click()}>
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Upload className="h-4 w-4" aria-hidden />}
+              {uploading ? "Importing..." : "Import CSV"}
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              aria-label="Choose CSV file to import"
+              onChange={handleFileSelected}
+            />
 
-        <button
-          type="button"
-          onClick={() => setMaxLevelDialogOpen(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-xs font-semibold text-emerald-800"
-        >
-          <Calculator className="w-3.5 h-3.5" />
-          Max Level
-        </button>
+            <Button variant="outline" size="sm" className="h-9" onClick={() => setMaxLevelDialogOpen(true)}>
+              <Calculator className="h-4 w-4" aria-hidden />
+              Recalculate max level
+            </Button>
 
-        <Dialog open={maxLevelDialogOpen} onOpenChange={setMaxLevelDialogOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>Recalculate Max Level / Max Level Peak</DialogTitle>
-            </DialogHeader>
-            <div className="flex flex-col gap-4 py-2">
-              <p className="text-xs text-slate-500">
-                Formula: Average Sale/Day (per item+location, seasonal) × Lead Time (days, from system) × Safety
-                Factor × Growth Rate. Max Level uses Jun-Sep sales, Max Level Peak uses Oct-May sales. Lead Time is
-                always taken from the system per item — it can't be overridden here, since one number for every item
-                would be wrong for most of them.
-              </p>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="safetyFactor">Safety Factor</Label>
-                <Input
-                  id="safetyFactor"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={safetyFactor}
-                  onChange={(e) => setSafetyFactor(e.target.value)}
-                  placeholder={String(DEFAULT_SAFETY_FACTOR)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="growthRate">Growth Rate</Label>
-                <Input
-                  id="growthRate"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={growthRate}
-                  onChange={(e) => setGrowthRate(e.target.value)}
-                  placeholder={String(DEFAULT_GROWTH_RATE)}
-                />
-              </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" className="h-9" disabled={!!syncing}>
+                  <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} aria-hidden />
+                  {syncing ? "Syncing..." : "Sync data"}
+                  <ChevronDown className="h-4 w-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80">
+                {(Object.keys(SYNC_TYPES) as SyncType[]).map((type) => (
+                  <DropdownMenuItem key={type} disabled={!!syncing} onSelect={() => runSync(type)}>
+                    {SYNC_TYPES[type].label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+      />
+
+      <Dialog open={maxLevelDialogOpen} onOpenChange={setMaxLevelDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Recalculate Max Level / Max Level Peak</DialogTitle>
+            <DialogDescription>
+              Formula: Average Sale/Day (per item+location, seasonal) × Lead Time (days, from system) × Safety Factor ×
+              Growth Rate. Max Level uses Jun-Sep sales, Max Level Peak uses Oct-May sales. Lead Time is always taken
+              from the system per item — it can't be overridden here, since one number for every item would be wrong for
+              most of them.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="safetyFactor">Safety Factor</Label>
+              <Input
+                id="safetyFactor"
+                type="number"
+                step="0.1"
+                min="0"
+                value={safetyFactor}
+                onChange={(e) => setSafetyFactor(e.target.value)}
+                placeholder={String(DEFAULT_SAFETY_FACTOR)}
+              />
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setMaxLevelDialogOpen(false)} disabled={recalculating}>
-                Cancel
-              </Button>
-              <Button onClick={runMaxLevelRecalc} disabled={recalculating}>
-                {recalculating ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}
-                {recalculating ? "Calculating..." : "Recalculate"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="growthRate">Growth Rate</Label>
+              <Input
+                id="growthRate"
+                type="number"
+                step="0.1"
+                min="0"
+                value={growthRate}
+                onChange={(e) => setGrowthRate(e.target.value)}
+                placeholder={String(DEFAULT_GROWTH_RATE)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setMaxLevelDialogOpen(false)} disabled={recalculating}>
+              Cancel
+            </Button>
+            <Button onClick={runMaxLevelRecalc} disabled={recalculating}>
+              {recalculating && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+              {recalculating ? "Calculating..." : "Recalculate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        <div className="w-px h-5 bg-slate-200 mx-1" />
+      {hasResult && !expanded && (
+        <div>
+          <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={() => setExpanded(true)}>
+            Show last result
+          </Button>
+        </div>
+      )}
 
-        {(Object.keys(SYNC_TYPES) as SyncType[]).map((type) => (
-          <button
-            key={type}
-            disabled={!!syncing}
-            onClick={() => runSync(type)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-violet-300 bg-violet-50 hover:bg-violet-100 disabled:opacity-60 text-xs font-semibold text-violet-800"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncing === type ? "animate-spin" : ""}`} />
-            {syncing === type ? "Syncing..." : `Sync ${SYNC_TYPES[type].label}`}
-          </button>
-        ))}
+      {hasResult && expanded && (
+        <section aria-label="Last import and sync result" className="flex flex-col gap-4 rounded-lg border bg-card p-4">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-medium">Last result</p>
+            <Button variant="ghost" size="icon" className="-mr-2 -mt-2 h-8 w-8" onClick={() => setExpanded(false)} aria-label="Hide last result">
+              <X className="h-4 w-4" aria-hidden />
+            </Button>
+          </div>
 
-        {(importResult?.summary || lastSync) && (
-          <button
-            onClick={() => setExpanded((e) => !e)}
-            className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-800"
-          >
-            {expanded ? "Hide" : "Show"} last result
-            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-        )}
-      </div>
-
-      {expanded && (importResult?.summary || lastSync) && (
-        <div className="border-t border-slate-200 p-3 flex flex-col gap-3">
           {importResult?.summary && (
             <div>
-              <p className="text-xs font-bold text-slate-700 mb-2">CSV Import — last run result</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                <SummaryStat label="Rows Processed" value={importResult.summary.rowsProcessed} />
-                <SummaryStat label="Items Created" value={importResult.summary.itemsCreated} />
-                <SummaryStat label="Items Updated" value={importResult.summary.itemsUpdated} />
-                <SummaryStat label="Location Settings" value={importResult.summary.locationSettingsUpserted} />
-                <SummaryStat label="Opening Entries Added" value={importResult.summary.openingEntriesAdded} />
-                <SummaryStat label="Opening Entries Skipped" value={importResult.summary.openingEntriesSkipped} />
+              <p className="mb-2 text-sm text-muted-foreground">CSV import</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-6">
+                <SummaryStat label="Rows processed" value={importResult.summary.rowsProcessed} />
+                <SummaryStat label="Items created" value={importResult.summary.itemsCreated} />
+                <SummaryStat label="Items updated" value={importResult.summary.itemsUpdated} />
+                <SummaryStat label="Location settings" value={importResult.summary.locationSettingsUpserted} />
+                <SummaryStat label="Opening entries added" value={importResult.summary.openingEntriesAdded} />
+                <SummaryStat label="Opening entries skipped" value={importResult.summary.openingEntriesSkipped} />
               </div>
               {importResult.errors && importResult.errors.length > 0 && (
-                <ul className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md p-3 max-h-40 overflow-auto list-disc list-inside mt-2">
+                <ul className="mt-2 max-h-40 list-inside list-disc overflow-auto rounded-md border border-danger/25 bg-danger-soft p-3 text-xs text-danger">
                   {importResult.errors.map((e, i) => (
                     <li key={i}>{e}</li>
                   ))}
@@ -591,25 +688,25 @@ function ImportAndSyncBar({ onDataChanged }: { onDataChanged: () => void }) {
 
           {lastSync && (
             <div>
-              <p className="text-xs font-bold text-slate-700 mb-2">{lastSync.label} sync — last run result</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+              <p className="mb-2 text-sm text-muted-foreground">{lastSync.label} sync</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-6">
                 {Object.entries(lastSync.summary).map(([k, v]) => (
                   <SummaryStat key={k} label={k} value={v} />
                 ))}
               </div>
             </div>
           )}
-        </div>
+        </section>
       )}
-    </div>
+    </>
   );
 }
 
 function SummaryStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1.5">
-      <div className="text-sm font-extrabold text-slate-900">{value}</div>
-      <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{label}</div>
+    <div className="rounded-md border bg-secondary px-3 py-2">
+      <div className="text-base font-semibold tabular-nums">{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
     </div>
   );
 }

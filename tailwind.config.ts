@@ -1,8 +1,22 @@
 import type { Config } from "tailwindcss"
 import tailwindcssAnimate from "tailwindcss-animate"
 
+// Brand blue ramp built around the gear logo blue (#2274B8 = 600).
+const brandBlue = {
+  50: "#f0f6fc",
+  100: "#e1edf9",
+  200: "#c5ddf3",
+  300: "#9cc4ea",
+  400: "#66a5dd",
+  500: "#3b8ad0",
+  600: "#2274b8",
+  700: "#1b5e98",
+  800: "#174d7c",
+  900: "#153f66",
+  950: "#0d2740",
+}
+
 const config: Config = {
-  darkMode: ["class"],
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -62,32 +76,33 @@ const config: Config = {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
-        violet: {
-          50: "#f5f3ff",
-          100: "#ede9fe",
-          200: "#ddd6fe",
-          300: "#c4b5fd",
-          400: "#a78bfa",
-          500: "#8b5cf6",
-          600: "#7c3aed",
-          700: "#6d28d9",
-          800: "#5b21b6",
-          900: "#4c1d95",
-          950: "#3b0764",
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          soft: "hsl(var(--success-soft))",
         },
-        indigo: {
-          50: "#eef2ff",
-          100: "#e0e7ff",
-          200: "#c7d2fe",
-          300: "#a5b4fc",
-          400: "#818cf8",
-          500: "#6366f1",
-          600: "#4f46e5",
-          700: "#4338ca",
-          800: "#3730a3",
-          900: "#312e81",
-          950: "#1e1b4b",
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          soft: "hsl(var(--warning-soft))",
         },
+        danger: {
+          DEFAULT: "hsl(var(--danger))",
+          soft: "hsl(var(--danger-soft))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          soft: "hsl(var(--info-soft))",
+        },
+        neutral: {
+          DEFAULT: "hsl(var(--neutral))",
+          soft: "hsl(var(--neutral-soft))",
+        },
+        "brand-lime": "hsl(var(--brand-lime))",
+        brand: brandBlue,
+        // Pages not yet migrated to tokens still use violet/indigo/blue utilities; map all
+        // three onto the brand ramp so the whole app follows the brand colour.
+        violet: brandBlue,
+        indigo: brandBlue,
+        blue: brandBlue,
       },
       borderRadius: {
         lg: "var(--radius)",

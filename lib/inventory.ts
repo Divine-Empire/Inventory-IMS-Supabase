@@ -16,6 +16,8 @@ export type InventoryRow = {
   locationName: string;
 
   liveStock: number;
+  reservedQty: number; // held for OTP orders (Packing List -> Pre-Invoice), not yet dispatched
+  freeQty: number; // liveStock - reservedQty: what can still be promised to a new order or transferred out
   maxLevel: number | null;
   maxLevelPeak: number | null;
   indentRaisedQty: number;
@@ -38,7 +40,7 @@ export type InventoryRow = {
   status: "Fast Moving" | "Slow Moving" | "Non-Moving";
 };
 
-function signedLedgerQty(txnType: string, qty: number): number {
+export function signedLedgerQty(txnType: string, qty: number): number {
   switch (txnType) {
     case "IN":
     case "TRANSFER_IN":
@@ -66,6 +68,7 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
     recentOutRows,
     itemMasters,
     locationMasters,
+    reservationRows,
   ] = await Promise.all([
     fetchAllRows<any>(() => supabase.from("ims_item_location_setting").select("itemCode, locationId, maxLevel, maxLevelPeak")),
     fetchAllRows<any>(() => supabase.from("ims_stock_ledger").select("itemCode, locationId, txnType, qty")),
@@ -82,6 +85,7 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
     ),
     fetchAllRows<any>(() => supabase.from("ims_item_master").select("itemCode, itemName, itemGroup, category, uom")),
     fetchAllRows<any>(() => supabase.from("ims_location_master").select("id, locationCode, locationName, parentLocationId")),
+    fetchAllRows<any>(() => supabase.from("ims_stock_reservation").select("itemCode, locationId, qty").eq("status", "ACTIVE")),
   ]);
 
   // Sub-godowns (CG's children: MANIQUIP, HO, CG-WAREHOUSE, CG-SERVICE-INBOUND)
@@ -118,6 +122,8 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
   // import, ...) — a location a CSV import never configured but that a
   // Stock Transfer later moved stock into must still show up here.
   const allKeys = new Map<string, { itemCode: string; locationId: string }>();
+  // A reservation alone (even with no ledger/serial/setting row yet) must still surface a row.
+  for (const r of reservationRows) allKeys.set(key(r.itemCode, r.locationId), { itemCode: r.itemCode, locationId: topLevel(r.locationId)! });
   for (const s of locationSettings) allKeys.set(key(s.itemCode, s.locationId), { itemCode: s.itemCode, locationId: topLevel(s.locationId)! });
   for (const r of ledgerRows) if (r.locationId) allKeys.set(key(r.itemCode, r.locationId), { itemCode: r.itemCode, locationId: topLevel(r.locationId)! });
   for (const r of serialRows) if (r.currentLocationId) allKeys.set(key(r.itemCode, r.currentLocationId), { itemCode: r.itemCode, locationId: topLevel(r.currentLocationId)! });
@@ -130,6 +136,14 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
     liveStockMap.set(k, (liveStockMap.get(k) || 0) + signedLedgerQty(r.txnType, r.qty));
     if (r.txnType === "TRANSFER_IN") transferInMap.set(k, (transferInMap.get(k) || 0) + r.qty);
     if (r.txnType === "TRANSFER_OUT") transferOutMap.set(k, (transferOutMap.get(k) || 0) + r.qty);
+  }
+
+  // Reserved for OTP orders — rolled up into the top-level location like
+  // every other column, so CG's row holds all of its godowns' reservations.
+  const reservedMap = new Map<string, number>();
+  for (const r of reservationRows) {
+    const k = key(r.itemCode, r.locationId);
+    reservedMap.set(k, (reservedMap.get(k) || 0) + r.qty);
   }
 
   const recentOutMap = new Map<string, number>();
@@ -193,6 +207,7 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
 
     const k = key(itemCode, locationId);
     const liveStock = liveStockMap.get(k) || 0;
+    const reservedQty = reservedMap.get(k) || 0;
     const setting = settingByKey.get(k);
     const maxLevel = setting?.maxLevel ?? null;
     const maxLevelPeak = setting?.maxLevelPeak ?? null;
@@ -223,6 +238,8 @@ export async function getInventoryRows(): Promise<InventoryRow[]> {
       locationName: location.locationName,
 
       liveStock,
+      reservedQty,
+      freeQty: liveStock - reservedQty,
       maxLevel,
       maxLevelPeak,
       indentRaisedQty,

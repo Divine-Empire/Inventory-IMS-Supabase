@@ -28,10 +28,23 @@ export async function GET(req: NextRequest) {
       .eq("itemCode", itemCode)
       .eq("currentLocationId", location.id)
       .eq("status", "IN_STOCK")
-      .order("warrantyExpiryDate", { ascending: true, nullsFirst: false });
+      .order("warrantyExpiryDate", { ascending: true, nullsFirst: false })
+      .order("createdAt", { ascending: true });
 
     if (error) throw new Error(error.message);
-    return NextResponse.json({ success: true, serials: serials || [] });
+
+    // Serials held for an OTP order can't be moved, so don't offer them.
+    const { data: reserved, error: reservedErr } = await supabase
+      .from("ims_stock_reservation")
+      .select("serialNo")
+      .eq("status", "ACTIVE")
+      .eq("itemCode", itemCode)
+      .eq("locationId", location.id)
+      .not("serialNo", "is", null);
+    if (reservedErr) throw new Error(reservedErr.message);
+    const reservedSerials = new Set((reserved || []).map((r) => r.serialNo));
+
+    return NextResponse.json({ success: true, serials: (serials || []).filter((s) => !reservedSerials.has(s.serialNo)) });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }

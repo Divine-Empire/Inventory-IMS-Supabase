@@ -1,29 +1,34 @@
 import { getSupabaseAdmin, fetchAllRows } from "@/lib/supabase";
-import { resolvePfmsLocationCode } from "@/lib/pfms-location-aliases";
+import { resolvePfmsLocationCode, resolvePfmsGodownCode } from "@/lib/pfms-location-aliases";
+import { RECEIPT_REF, LEGACY_SERIAL_REF, RETURN_REF, recordPurchaseReturnOut } from "@/lib/integrations/pfms";
 
-// PFMS's Purchase Return stage tracks quantity only — it does NOT reference
-// specific serial numbers (confirmed: pfms_purchase-return has no serial
-// column, and the free-text serial list captured at Material Testing/QC
-// isn't validated or carried forward). So this can only ever be a
-// quantity-level stock ADJUSTMENT against the lift's item+location, not a
-// precise per-serial removal.
+// Fallback for lib/integrations/pfms.ts's live Purchase Return push: picks up
+// any return that never reached IMS. A return with picked serials goes
+// through recordPurchaseReturnOut (those serials leave stock, flagged
+// RETURNED); a qty-only return is batched here as a negative ADJUSTMENT at
+// the godown the returning user manages (pfms_purchase-return.godownLocation),
+// else where the lift was received, else the indent's top-level warehouse.
 //
 // Idempotent: keyed by the pfms_purchase-return row's own id, so re-running
-// only processes returns not already recorded as an adjustment.
+// only processes returns not already recorded.
 
 type PfmsPurchaseReturnRow = {
   id: string;
   liftNo: string;
   returnedQty: number | null;
+  godownLocation: string | null;
+  serialNumbers: string[] | null;
 };
 
 export async function syncPfmsReturns() {
   const supabase = getSupabaseAdmin();
 
-  const [returns, existingAdjustments, lifts, indents, locations, ourItems] = await Promise.all([
-    fetchAllRows<PfmsPurchaseReturnRow>(() => supabase.from("pfms_purchase-return").select("id, liftNo, returnedQty")),
+  const [returns, existingAdjustments, lifts, indents, locations, ourItems, receipts] = await Promise.all([
+    fetchAllRows<PfmsPurchaseReturnRow>(() =>
+      supabase.from("pfms_purchase-return").select("id, liftNo, returnedQty, godownLocation, serialNumbers")
+    ),
     fetchAllRows<{ referenceNo: string | null }>(() =>
-      supabase.from("ims_stock_ledger").select("referenceNo").eq("referenceType", "PFMS Purchase Return")
+      supabase.from("ims_stock_ledger").select("referenceNo").eq("referenceType", RETURN_REF)
     ),
     fetchAllRows<{ liftNo: string; indentNo: string }>(() => supabase.from("pfms_lift").select("liftNo, indentNo")),
     fetchAllRows<{ indentNo: string; itemCode: string | null; warehouseLocation: string | null }>(() =>
@@ -31,6 +36,9 @@ export async function syncPfmsReturns() {
     ),
     fetchAllRows<{ id: string; locationCode: string }>(() => supabase.from("ims_location_master").select("id, locationCode")),
     fetchAllRows<{ itemCode: string }>(() => supabase.from("ims_item_master").select("itemCode")),
+    fetchAllRows<{ referenceNo: string | null; locationId: string }>(() =>
+      supabase.from("ims_stock_ledger").select("referenceNo, locationId").eq("txnType", "IN").in("referenceType", [RECEIPT_REF, LEGACY_SERIAL_REF])
+    ),
   ]);
 
   const alreadyRecorded = new Set(existingAdjustments.map((r) => r.referenceNo));
@@ -38,12 +46,15 @@ export async function syncPfmsReturns() {
   const indentByNo = new Map(indents.map((i) => [i.indentNo, i]));
   const locationByCode = new Map(locations.map((l) => [l.locationCode, l.id]));
   const ourItemCodes = new Set(ourItems.map((i) => i.itemCode));
+  const receiptLocationByLift = new Map<string, string>();
+  for (const r of receipts) if (r.referenceNo && !receiptLocationByLift.has(r.referenceNo)) receiptLocationByLift.set(r.referenceNo, r.locationId);
 
   let alreadySynced = 0;
   let unmatchedLift = 0;
   let unmatchedItem = 0;
   let unmatchedLocation = 0;
   let skippedNoQty = 0;
+  let withSerials = 0;
 
   const toCreate: { itemCode: string; locationId: string; qty: number; referenceNo: string; liftNo: string }[] = [];
 
@@ -54,6 +65,13 @@ export async function syncPfmsReturns() {
     }
     if (!ret.returnedQty || ret.returnedQty <= 0) {
       skippedNoQty++;
+      continue;
+    }
+
+    if (ret.serialNumbers && ret.serialNumbers.length > 0) {
+      // Few and heavier (per-serial lookups) — handled by the live-push function.
+      await recordPurchaseReturnOut({ returnId: ret.id });
+      withSerials++;
       continue;
     }
 
@@ -70,8 +88,11 @@ export async function syncPfmsReturns() {
       continue;
     }
 
-    const locationCode = resolvePfmsLocationCode(indent.warehouseLocation);
-    const locationId = locationCode ? locationByCode.get(locationCode) : undefined;
+    const godownCode = resolvePfmsGodownCode(ret.godownLocation);
+    const locationId =
+      (godownCode ? locationByCode.get(godownCode) : undefined) ??
+      receiptLocationByLift.get(ret.liftNo) ??
+      (resolvePfmsLocationCode(indent.warehouseLocation) ? locationByCode.get(resolvePfmsLocationCode(indent.warehouseLocation)!) : undefined);
     if (!locationId) {
       unmatchedLocation++;
       continue;
@@ -89,9 +110,9 @@ export async function syncPfmsReturns() {
         locationId: r.locationId,
         txnType: "ADJUSTMENT",
         qty: r.qty, // signed: negative = stock decrease
-        referenceType: "PFMS Purchase Return",
+        referenceType: RETURN_REF,
         referenceNo: r.referenceNo,
-        remarks: `Quantity-level adjustment — PFMS Purchase Return does not track specific serial numbers (lift ${r.liftNo})`,
+        remarks: `Quantity-level adjustment — no serials picked on this return (lift ${r.liftNo})`,
       }))
     );
     if (error) throw new Error(`Adjustment batch insert failed: ${error.message}`);
@@ -100,6 +121,7 @@ export async function syncPfmsReturns() {
   return {
     totalReturns: returns.length,
     created: toCreate.length,
+    withSerials,
     alreadySynced,
     unmatchedLift,
     unmatchedItem,

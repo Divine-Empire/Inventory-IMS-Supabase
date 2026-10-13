@@ -13,6 +13,20 @@ export function getSupabaseAdmin() {
   });
 }
 
+/** fetchAllRows for an `.in(column, values)` filter, split into chunks so the request URL stays short. */
+export async function fetchAllRowsIn<T>(
+  queryBuilder: (chunk: string[]) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  values: string[],
+  chunkSize = 100
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let i = 0; i < values.length; i += chunkSize) {
+    const chunk = values.slice(i, i + chunkSize);
+    rows.push(...(await fetchAllRows<T>(() => queryBuilder(chunk))));
+  }
+  return rows;
+}
+
 /**
  * PostgREST caps a single response at 1000 rows by default — several of the
  * tables this app reads (pfms_for_ims, pfms_item_master, ims_stock_ledger,

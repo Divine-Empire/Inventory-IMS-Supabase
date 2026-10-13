@@ -1,4 +1,5 @@
-import { getSupabaseAdmin } from "@/lib/supabase";
+import { getSupabaseAdmin, fetchAllRows } from "@/lib/supabase";
+import { signedLedgerQty } from "@/lib/inventory";
 
 export class StockTransferError extends Error {}
 
@@ -14,6 +15,10 @@ export async function createTransfer(params: {
   fromLocationCode: string;
   toLocationCode: string;
   requestedBy?: string;
+  /** What caused this transfer, e.g. "OTP Packing List" + the order number — kept for movement analysis. */
+  referenceType?: string;
+  referenceNo?: string;
+  remarks?: string;
   items: { itemCode: string; qty: number; serialNumbers?: string[] }[];
 }) {
   const supabase = getSupabaseAdmin();
@@ -50,6 +55,9 @@ export async function createTransfer(params: {
       toLocationId: toLocation.id,
       status: "pending",
       requestedBy: params.requestedBy,
+      referenceType: params.referenceType ?? null,
+      referenceNo: params.referenceNo ?? null,
+      remarks: params.remarks ?? null,
     })
     .select()
     .single();
@@ -91,6 +99,33 @@ export async function shipTransfer(transferId: string, approvedBy?: string) {
   if (!transfer) throw new StockTransferError("Transfer not found");
   if (transfer.status !== "pending") {
     throw new StockTransferError(`Transfer is already "${transfer.status}" — cannot ship again`);
+  }
+
+  // Stock reserved for an OTP order can't be shipped away to another godown.
+  for (const item of transfer.items) {
+    const { data: reservedRows, error: reservedErr } = await supabase
+      .from("ims_stock_reservation")
+      .select("serialNo, qty")
+      .eq("status", "ACTIVE")
+      .eq("locationId", transfer.fromLocationId)
+      .eq("itemCode", item.itemCode);
+    if (reservedErr) throw new Error(reservedErr.message);
+    if (!reservedRows || reservedRows.length === 0) continue;
+
+    const reservedSerials = new Set(reservedRows.map((r) => r.serialNo).filter(Boolean));
+    const clash = item.serialNumbers.find((s: string) => reservedSerials.has(s));
+    if (clash) throw new StockTransferError(`Serial "${clash}" is reserved for an order — it can't be transferred`);
+
+    const reservedQty = reservedRows.reduce((sum, r) => sum + r.qty, 0);
+    const ledger = await fetchAllRows<{ txnType: string; qty: number }>(() =>
+      supabase.from("ims_stock_ledger").select("txnType, qty").eq("itemCode", item.itemCode).eq("locationId", transfer.fromLocationId)
+    );
+    const onHand = ledger.reduce((sum, l) => sum + signedLedgerQty(l.txnType, l.qty), 0);
+    if (item.qty > onHand - reservedQty) {
+      throw new StockTransferError(
+        `Item ${item.itemCode}: only ${Math.max(0, onHand - reservedQty)} free at the source (${reservedQty} reserved for orders), can't ship ${item.qty}`
+      );
+    }
   }
 
   for (const item of transfer.items) {

@@ -1,15 +1,36 @@
 "use client";
 
 import type React from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
+import { cn } from "@/lib/utils";
 import { Sidebar } from "./sidebar";
+import { AppHeader } from "./app-header";
 import { Footer } from "./footer";
 
+const COLLAPSE_KEY = "ims-sidebar-collapsed";
+
+function FullScreenStatus({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-background" role="status">
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden />
+        {message}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * App shell: sidebar + header + main + footer. Kept under the MainLayout name so
+ * every existing page keeps working unchanged.
+ */
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -17,35 +38,36 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, isLoading, router]);
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
+    } catch {
+      /* storage unavailable: default expanded */
+    }
+  }, []);
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Redirecting to login...</p>
-        </div>
-      </div>
-    );
-  }
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(COLLAPSE_KEY, c ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !c;
+    });
+  };
+
+  if (isLoading) return <FullScreenStatus message="Loading..." />;
+  if (!isAuthenticated) return <FullScreenStatus message="Redirecting to login..." />;
 
   return (
-    <div className="min-h-screen bg-gray-50 bg-blue-50">
-      <Sidebar />
-      <div className="md:pl-64">
-        <main className="p-4 md:p-6 pb-16 md:pb-16 bg-blue-50">{children}</main>
+    <div className="min-h-dvh bg-background">
+      <Sidebar collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
+      <div className={cn("flex min-h-dvh flex-col transition-[padding] duration-150", collapsed ? "md:pl-14" : "md:pl-60")}>
+        <AppHeader />
+        <main className="flex-1 p-4 md:p-6">{children}</main>
+        <Footer />
       </div>
-      <Footer />
     </div>
   );
 }

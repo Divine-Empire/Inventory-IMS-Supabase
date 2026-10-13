@@ -25,6 +25,9 @@ export async function POST(req: NextRequest) {
       fromLocationCode: body.fromLocationCode,
       toLocationCode: body.toLocationCode,
       requestedBy: body.requestedBy,
+      referenceType: body.referenceType,
+      referenceNo: body.referenceNo,
+      remarks: body.remarks,
       items: body.items,
     });
     return NextResponse.json({ success: true, transfer });

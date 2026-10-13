@@ -13,6 +13,8 @@ const GROUPS: Group[] = [
     title: "Inventory Page - Columns",
     terms: [
       { term: "Live Stock", meaning: "Kitna actual stock abhi us location pe hai - IN/OUT/Transfer sab ledger entries ka running total." },
+      { term: "Reserved", meaning: "OTP ke Packing List me jo stock kisi order ke liye alag rakha ja chuka hai lekin Pre-Invoice se abhi dispatch (OUT) nahi hua - Live Stock me count hota hai, par naye order ya transfer ke liye available nahi." },
+      { term: "Free", meaning: "Live Stock - Reserved. Matlab abhi jitna naye order ko promise ya kisi aur godown me transfer kiya ja sakta hai." },
       { term: "CG (combined row)", meaning: "CG location ka row iske 4 sub-godowns (Warehouse, Maniquip, Service Inbound, Head Office) ka combined total dikhata hai - PFMS Material Received aur OTP Packing List se exact sub-godown track hota hai backend me, but Inventory page pe ek hi aggregated CG row dikhta hai." },
       { term: "Max Level", meaning: "Off-season (Jun-Sep) ka target stock level - formula se calculate hota hai: Avg Sale/Day x Lead Time x Safety Factor x Growth Rate. Inventory page ke 'Max Level' button se recalculate hota hai." },
       { term: "Max Level Peak", meaning: "Peak season (Oct-May) ka target stock level - same formula, lekin sirf Oct-May ke sales data se Avg Sale/Day nikalta hai." },
