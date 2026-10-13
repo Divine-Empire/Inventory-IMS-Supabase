@@ -17,7 +17,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={inter.className}>
         <AuthProvider>{children}</AuthProvider>
-        <Toaster richColors position="top-right" />
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            classNames: {
+              error: "!border-danger/25 !bg-danger-soft !text-danger",
+              success: "!border-success/25 !bg-success-soft !text-success",
+              warning: "!border-warning/25 !bg-warning-soft !text-warning",
+              info: "!border-info/25 !bg-info-soft !text-info",
+            },
+          }}
+        />
       </body>
     </html>
   );

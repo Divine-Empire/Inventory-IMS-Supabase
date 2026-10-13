@@ -51,6 +51,10 @@ type DataTableProps<T> = {
   label: string;
   pageSizeOptions?: number[];
   defaultPageSize?: number;
+  /** Set false for short tables that should show every row without a pager. */
+  paginate?: boolean;
+  /** Initial sort. */
+  defaultSort?: { id: string; dir: "asc" | "desc" };
   /** Tailwind max-height for the scroll area; the header stays pinned inside it. */
   maxHeightClassName?: string;
 };
@@ -83,9 +87,11 @@ export function DataTable<T>({
   label,
   pageSizeOptions = [25, 50, 100],
   defaultPageSize = 50,
+  paginate = true,
+  defaultSort,
   maxHeightClassName = "max-h-[calc(100dvh-20rem)] min-h-[320px]",
 }: DataTableProps<T>) {
-  const [sort, setSort] = useState<SortState>(null);
+  const [sort, setSort] = useState<SortState>(defaultSort ?? null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(defaultPageSize);
 
@@ -140,8 +146,8 @@ export function DataTable<T>({
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = useMemo(
-    () => sortedRows.slice(safePage * pageSize, safePage * pageSize + pageSize),
-    [sortedRows, safePage, pageSize],
+    () => (paginate ? sortedRows.slice(safePage * pageSize, safePage * pageSize + pageSize) : sortedRows),
+    [sortedRows, safePage, pageSize, paginate],
   );
 
   const toggleSort = (id: string) => {
@@ -206,9 +212,9 @@ export function DataTable<T>({
                         type="button"
                         onClick={() => toggleSort(c.id)}
                         className={cn(
-                          "inline-flex items-center gap-1 rounded-sm hover:text-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "inline-flex items-center gap-1 rounded-sm hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           c.align === "right" && "flex-row-reverse",
-                          active && "text-brand-600",
+                          active && "text-brand-700",
                         )}
                       >
                         {c.header}
@@ -269,6 +275,7 @@ export function DataTable<T>({
         )}
       </div>
 
+      {paginate && (
       <TablePagination
         page={safePage}
         pageSize={pageSize}
@@ -280,6 +287,7 @@ export function DataTable<T>({
           setPage(0);
         }}
       />
+      )}
     </div>
   );
 }

@@ -19,7 +19,7 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
       ref={ref}
       className={cn(
         "flex flex-col space-y-1.5 p-6",
-        gradient && "bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-t-lg",
+        gradient && "bg-primary text-primary-foreground rounded-t-lg",
         className,
       )}
       {...props}

@@ -1,4 +1,4 @@
-import { ArrowUpDown } from "lucide-react";
+import type { StatusTone } from "@/components/data/status-badge";
 
 export type SeasonalityMonth = {
   month: string;
@@ -49,14 +49,15 @@ export type AnalysisData = {
   priorityReview: ItemClassification[];
 };
 
-export const INTERPRETATION_STYLES: Record<string, string> = {
-  "Lean / clean excess": "bg-sky-100 text-sky-800 border-sky-300",
-  "Normal / recovery": "bg-slate-100 text-slate-700 border-slate-300",
-  "Regular-high": "bg-amber-100 text-amber-800 border-amber-300",
-  "Peak / protect availability": "bg-rose-100 text-rose-800 border-rose-300",
+export const INTERPRETATION_TONE: Record<string, StatusTone> = {
+  "Lean / clean excess": "info",
+  "Normal / recovery": "neutral",
+  "Regular-high": "warning",
+  "Peak / protect availability": "danger",
 };
 
-export const ABC_COLORS: Record<string, string> = { A: "bg-emerald-50", B: "bg-amber-50", C: "bg-slate-50" };
+export const ABC_TONE: Record<string, StatusTone> = { A: "success", B: "info", C: "neutral" };
+export const FSN_TONE: Record<string, StatusTone> = { F: "success", S: "warning", N: "neutral" };
 
 export const CLASS_POLICY_TEXT: Record<string, string> = {
   AF: "Core stock / weekly review / protect peak availability",
@@ -79,28 +80,11 @@ export function monthHeaderLabel(key: string): string {
   return `${MONTH_NAMES[m - 1]} ${y}`;
 }
 
-export function SectionHeader({ title }: { title: string }) {
-  return <h2 className="text-sm font-extrabold text-slate-800 uppercase tracking-wide">{title}</h2>;
-}
-
-export function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <th className={`px-3 py-2.5 border-r border-white/10 whitespace-nowrap ${className}`}>{children}</th>;
-}
-
-export function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-3 py-2 border-r border-slate-100 ${className}`}>{children}</td>;
-}
-
-export function SortTh({ label, active, dir, onClick }: { label: string; active: boolean; dir: "asc" | "desc"; onClick: () => void }) {
+export function SectionHeader({ title, description }: { title: string; description?: string }) {
   return (
-    <th
-      className="px-3 py-2.5 border-r border-white/10 whitespace-nowrap text-right cursor-pointer select-none hover:bg-white/10"
-      onClick={onClick}
-    >
-      <span className="inline-flex items-center gap-1">
-        {label}
-        <ArrowUpDown className={`w-3 h-3 ${active ? "opacity-100" : "opacity-40"}`} />
-      </span>
-    </th>
+    <div>
+      <h2 className="text-base font-semibold">{title}</h2>
+      {description && <p className="text-sm text-muted-foreground">{description}</p>}
+    </div>
   );
 }

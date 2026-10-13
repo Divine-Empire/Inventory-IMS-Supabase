@@ -1,7 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
+import { DataTable, type DataColumn } from "@/components/data/data-table";
+import { StatusBadge } from "@/components/data/status-badge";
 import type { SeasonalityMonth, ClassSummary } from "./shared";
-import { Th, Td, SectionHeader, INTERPRETATION_STYLES, ABC_COLORS, inr } from "./shared";
+import { SectionHeader, INTERPRETATION_TONE, ABC_TONE, inr } from "./shared";
 
 export function AnalysisTab({ seasonality, matrix }: { seasonality: SeasonalityMonth[]; matrix: ClassSummary[] }) {
   return (
@@ -13,83 +16,84 @@ export function AnalysisTab({ seasonality, matrix }: { seasonality: SeasonalityM
 }
 
 function SeasonalitySection({ seasonality }: { seasonality: SeasonalityMonth[] }) {
+  const columns = useMemo<DataColumn<SeasonalityMonth>[]>(
+    () => [
+      { id: "month", header: "Month", cell: (m) => <span className="font-medium">{m.monthLabel}</span> },
+      { id: "value", header: "Sales Value", align: "right", sortValue: (m) => m.salesValue, cell: (m) => <span className="font-semibold">{inr(m.salesValue)}</span> },
+      { id: "share", header: "Share of FY Sales", align: "right", sortValue: (m) => m.sharePct, cell: (m) => `${m.sharePct.toFixed(1)}%` },
+      {
+        id: "index",
+        header: "Seasonal Index",
+        align: "right",
+        sortValue: (m) => m.seasonalIndex,
+        cell: (m) => <span className="font-mono">{m.seasonalIndex.toFixed(3)}x</span>,
+      },
+      {
+        id: "interpretation",
+        header: "Planning Interpretation",
+        cell: (m) => <StatusBadge tone={INTERPRETATION_TONE[m.interpretation] ?? "neutral"}>{m.interpretation}</StatusBadge>,
+      },
+      { id: "qty", header: "Qty Sold", align: "right", sortValue: (m) => m.qtySold, cell: (m) => m.qtySold.toLocaleString("en-IN") },
+      { id: "lines", header: "Sales Lines", align: "right", sortValue: (m) => m.salesLines, cell: (m) => m.salesLines },
+    ],
+    []
+  );
+
   return (
-    <section className="flex flex-col gap-2">
-      <SectionHeader title="Section 1 — Seasonality" />
-      <div className="border border-slate-300 rounded-lg bg-white overflow-auto">
-        <table className="w-full text-sm border-collapse">
-          <thead className="bg-slate-900 text-white">
-            <tr className="text-left text-[11px] uppercase tracking-wide font-extrabold">
-              <Th>Month</Th>
-              <Th className="text-right">Sales Value</Th>
-              <Th className="text-right">Share of FY Sales</Th>
-              <Th className="text-right">Seasonal Index</Th>
-              <Th>Planning Interpretation</Th>
-              <Th className="text-right">Qty Sold</Th>
-              <Th className="text-right">Sales Lines</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {seasonality.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-8 text-slate-500">No invoiced sales yet this FY — run the sync above</td></tr>
-            ) : (
-              seasonality.map((m) => (
-                <tr key={m.month} className="hover:bg-slate-50">
-                  <Td className="font-semibold">{m.monthLabel}</Td>
-                  <Td className="text-right font-bold">{inr(m.salesValue)}</Td>
-                  <Td className="text-right">{m.sharePct.toFixed(1)}%</Td>
-                  <Td className="text-right font-mono">{m.seasonalIndex.toFixed(3)}x</Td>
-                  <Td>
-                    <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${INTERPRETATION_STYLES[m.interpretation]}`}>
-                      {m.interpretation}
-                    </span>
-                  </Td>
-                  <Td className="text-right">{m.qtySold.toLocaleString("en-IN")}</Td>
-                  <Td className="text-right">{m.salesLines}</Td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+    <section className="flex flex-col gap-3">
+      <SectionHeader title="Seasonality" description="How invoiced sales are spread across the months of this financial year." />
+      <DataTable
+        label="Seasonality by month"
+        columns={columns}
+        rows={seasonality}
+        getRowId={(m) => m.month}
+        paginate={false}
+        maxHeightClassName=""
+        empty={{
+          title: "No invoiced sales yet this FY",
+          description: "Run “Sync invoiced sales history” to load this financial year's sales.",
+        }}
+      />
     </section>
   );
 }
 
 function MatrixSection({ matrix }: { matrix: ClassSummary[] }) {
+  const columns = useMemo<DataColumn<ClassSummary>[]>(
+    () => [
+      {
+        id: "class",
+        header: "Class",
+        width: 90,
+        cell: (c) => (
+          <StatusBadge tone={ABC_TONE[c.class[0]] ?? "neutral"} className="font-semibold">
+            {c.class}
+          </StatusBadge>
+        ),
+      },
+      { id: "skus", header: "SKU Count", align: "right", sortValue: (c) => c.skuCount, cell: (c) => c.skuCount },
+      { id: "value", header: "Sales Value", align: "right", sortValue: (c) => c.salesValue, cell: (c) => <span className="font-semibold">{inr(c.salesValue)}</span> },
+      { id: "share", header: "Sales Share", align: "right", sortValue: (c) => c.salesSharePct, cell: (c) => `${c.salesSharePct.toFixed(1)}%` },
+      { id: "policy", header: "Control Policy", wrap: true, width: 200, cell: (c) => c.controlPolicy },
+      { id: "review", header: "Review", wrap: true, width: 110, cell: (c) => c.review },
+      { id: "peak", header: "Peak Handling", wrap: true, width: 200, cell: (c) => c.peakHandling },
+      { id: "rule", header: "Stocking Rule", wrap: true, width: 220, cell: (c) => c.stockingRule },
+    ],
+    []
+  );
+
   return (
-    <section className="flex flex-col gap-2">
-      <SectionHeader title="Section 2 — ABC-FSN Inventory Control Matrix" />
-      <div className="border border-slate-300 rounded-lg bg-white overflow-auto">
-        <table className="w-full text-sm border-collapse">
-          <thead className="bg-slate-900 text-white">
-            <tr className="text-left text-[11px] uppercase tracking-wide font-extrabold">
-              <Th>Class</Th>
-              <Th className="text-right">SKU Count</Th>
-              <Th className="text-right">Sales Value</Th>
-              <Th className="text-right">Sales Share</Th>
-              <Th>Control Policy</Th>
-              <Th>Review</Th>
-              <Th>Peak Handling</Th>
-              <Th>Stocking Rule</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {matrix.map((c) => (
-              <tr key={c.class} className={ABC_COLORS[c.class[0]]}>
-                <Td className="font-extrabold">{c.class}</Td>
-                <Td className="text-right">{c.skuCount}</Td>
-                <Td className="text-right font-bold">{inr(c.salesValue)}</Td>
-                <Td className="text-right">{c.salesSharePct.toFixed(1)}%</Td>
-                <Td>{c.controlPolicy}</Td>
-                <Td>{c.review}</Td>
-                <Td>{c.peakHandling}</Td>
-                <Td>{c.stockingRule}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <section className="flex flex-col gap-3">
+      <SectionHeader title="ABC-FSN inventory control matrix" description="Recommended control policy for each combination of value (ABC) and movement (FSN) class." />
+      <DataTable
+        label="ABC-FSN inventory control matrix"
+        columns={columns}
+        rows={matrix}
+        getRowId={(c) => c.class}
+        paginate={false}
+        maxHeightClassName=""
+        empty={{ title: "No classification data yet" }}
+      />
     </section>
   );
 }

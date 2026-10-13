@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Search, BookOpen } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
-import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
+import { FilterToolbar } from "@/components/data/filter-toolbar";
+import { EmptyState } from "@/components/data/table-states";
+import { Button } from "@/components/ui/button";
 
 type Term = { term: string; meaning: string };
 type Group = { title: string; terms: Term[] };
@@ -104,48 +106,40 @@ function GlossaryContent() {
   })).filter((g) => g.terms.length > 0);
 
   return (
-    <div className="p-6 flex flex-col gap-6 max-w-[1100px] mx-auto">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-1.5 h-8 bg-gradient-to-b from-violet-600 to-indigo-600 rounded-full" />
-          <div>
-            <h1 className="text-xl font-extrabold text-slate-900 uppercase tracking-wide flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-violet-600" /> Glossary
-            </h1>
-            <p className="text-xs text-slate-500">Har column/abbreviation ka simple meaning - ek jagah</p>
-          </div>
-        </div>
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search term..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-full w-64 bg-white"
-          />
-        </div>
-      </div>
+    <div className="flex max-w-5xl flex-col gap-4">
+      <PageHeader title="Glossary" description="Har column/abbreviation ka simple meaning - ek jagah" />
+
+      <FilterToolbar
+        search={{ value: search, onChange: setSearch, placeholder: "Search term or meaning" }}
+        chips={search.trim() ? [{ key: "q", label: `Search: ${search.trim()}`, onRemove: () => setSearch("") }] : []}
+        onClearAll={() => setSearch("")}
+      />
 
       {filteredGroups.length === 0 ? (
-        <p className="text-center text-sm text-slate-500 py-10">No matching terms</p>
+        <div className="rounded-lg border bg-card">
+          <EmptyState
+            title="No matching terms"
+            description="Try a different word, or clear the search."
+            action={
+              <Button variant="outline" size="sm" onClick={() => setSearch("")}>
+                Clear search
+              </Button>
+            }
+          />
+        </div>
       ) : (
         filteredGroups.map((g) => (
-          <div key={g.title} className="border border-slate-300 rounded-lg bg-white overflow-hidden">
-            <div className="bg-slate-900 text-white px-4 py-2.5">
-              <h2 className="text-xs font-extrabold uppercase tracking-wide">{g.title}</h2>
-            </div>
-            <div className="divide-y divide-slate-100">
+          <section key={g.title} className="overflow-hidden rounded-lg border border-brand-200 bg-card shadow-sm" aria-label={g.title}>
+            <h2 className="border-b border-brand-200 bg-secondary px-4 py-2.5 text-sm font-semibold text-brand-800">{g.title}</h2>
+            <dl className="divide-y">
               {g.terms.map((t) => (
-                <div key={t.term} className="flex flex-col sm:flex-row gap-1 sm:gap-4 px-4 py-3">
-                  <div className="sm:w-56 shrink-0">
-                    <Badge variant="outline" className="font-bold">{t.term}</Badge>
-                  </div>
-                  <p className="text-sm text-slate-600">{t.meaning}</p>
+                <div key={t.term} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:gap-6">
+                  <dt className="shrink-0 text-sm font-semibold text-brand-700 sm:w-60">{t.term}</dt>
+                  <dd className="text-sm text-muted-foreground">{t.meaning}</dd>
                 </div>
               ))}
-            </div>
-          </div>
+            </dl>
+          </section>
         ))
       )}
     </div>

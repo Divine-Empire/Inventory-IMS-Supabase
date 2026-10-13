@@ -11,7 +11,6 @@ import {
   Boxes,
   ArrowLeftRight,
   PieChart,
-  FileBarChart,
   BookOpen,
   Settings,
   PanelLeftClose,
@@ -24,7 +23,6 @@ export const menuItems = [
   { href: "/inventory", label: "Inventory", icon: Boxes, step: "inventory", group: "Operations" },
   { href: "/stock-transfer", label: "Stock Transfer", icon: ArrowLeftRight, step: "stock-transfer", group: "Operations" },
   { href: "/abc-eoq-analysis", label: "ABC / EOQ Analysis", icon: PieChart, step: "abc-eoq-analysis", group: "Insights" },
-  { href: "/reports", label: "Reports", icon: FileBarChart, step: "reports", group: "Insights" },
   { href: "/glossary", label: "Glossary", icon: BookOpen, step: "glossary", group: "Help" },
   { href: "/settings", label: "Settings", icon: Settings, step: "settings", group: "Admin" },
 ];

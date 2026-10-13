@@ -30,7 +30,9 @@ export function StatusTabs({
           <TabsTrigger
             key={t.value}
             value={t.value}
-            className="-mb-px gap-2 rounded-none border-b-2 border-transparent px-3 py-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none hover:text-foreground"
+            // The page renders the panel itself, so there is no Radix panel to point at.
+            aria-controls={undefined}
+            className="-mb-px gap-2 rounded-none border-b-2 border-transparent px-3 py-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-brand-700 data-[state=active]:shadow-none hover:text-foreground"
           >
             {t.label}
             {t.count !== undefined && (

@@ -2,13 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, RefreshCw, AlertCircle } from "lucide-react";
+import { RefreshCw, AlertTriangle } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
+import { PageHeader } from "@/components/layout/page-header";
+import { StatusTabs } from "@/components/data/status-tabs";
+import { ErrorState } from "@/components/data/table-states";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { AnalysisData } from "./shared";
 import { AnalysisTab } from "./analysis-tab";
 import { PriorityReviewTab } from "./priority-review-tab";
-import { SkuMonthlyValueTab } from "./sku-monthly-value-tab";
-import { SkuMonthlyQtyTab } from "./sku-monthly-qty-tab";
+import { SkuMonthlyTab } from "./sku-monthly-tab";
 
 const TABS = [
   { key: "analysis", label: "ABC / FSN Analysis" },
@@ -69,83 +73,58 @@ function AbcEoqAnalysisContent() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
-        <Loader2 className="w-10 h-10 animate-spin text-slate-800" />
-        <p className="text-slate-900 font-semibold animate-pulse">Loading analysis...</p>
-      </div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="border border-red-300 bg-red-50 rounded-lg p-6 flex flex-col items-center gap-3 max-w-xl mx-auto">
-        <AlertCircle className="w-10 h-10 text-red-600" />
-        <p className="text-sm font-semibold text-red-800">{error || "No data"}</p>
-        <button onClick={fetchData} className="px-4 py-2 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold">
-          Try Again
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="p-2 flex flex-col gap-6 max-w-[1700px] mx-auto">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-1.5 h-8 bg-gradient-to-b from-violet-600 to-indigo-600 rounded-full" />
-          <div>
-            <h1 className="text-xl font-extrabold text-slate-900 uppercase tracking-wide">ABC / FSN Analysis</h1>
-            <p className="text-xs text-slate-500">
-              Financial Year {data.financialYear} — {data.elapsedMonths.length} month(s) elapsed so far
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={runSync}
-            disabled={syncing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-violet-300 bg-violet-50 hover:bg-violet-100 disabled:opacity-60 text-xs font-semibold text-violet-800"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Syncing..." : "Sync Invoiced Sales History"}
-          </button>
-          <button
-            onClick={fetchData}
-            className="inline-flex items-center gap-1.5 text-xs font-bold border border-slate-300 rounded-full px-3 py-1.5 bg-white hover:bg-slate-50"
-          >
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="ABC / FSN Analysis"
+        description={data ? `Financial year ${data.financialYear} · ${data.elapsedMonths.length} month(s) elapsed so far` : loading ? "Loading..." : undefined}
+        actions={
+          <>
+            <Button variant="outline" size="sm" className="h-9" onClick={fetchData} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
+              Refresh
+            </Button>
+            <Button size="sm" className="h-9" onClick={runSync} disabled={syncing}>
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} aria-hidden />
+              {syncing ? "Syncing..." : "Sync invoiced sales history"}
+            </Button>
+          </>
+        }
+      />
 
-      {data.unattributedValue > 0 && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-          ₹{Math.round(data.unattributedValue).toLocaleString("en-IN")} of invoiced sales this FY couldn't be matched to an item in the Item Master (name mismatch) — excluded from classification below. Run Item Master import to improve matching.
-        </p>
+      {loading && !data ? (
+        <div className="flex flex-col gap-4" role="status" aria-label="Loading analysis">
+          <Skeleton className="h-10 w-full max-w-xl" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : error || !data ? (
+        <div className="rounded-lg border bg-card">
+          <ErrorState message={error || "No data"} onRetry={fetchData} />
+        </div>
+      ) : (
+        <>
+          {data.unattributedValue > 0 && (
+            <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/25 bg-warning-soft px-3 py-2 text-sm text-warning">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              <p>
+                ₹{Math.round(data.unattributedValue).toLocaleString("en-IN")} of invoiced sales this FY couldn't be matched to an item in the Item Master (name mismatch) — excluded from classification below. Run Item Master import to improve matching.
+              </p>
+            </div>
+          )}
+
+          <StatusTabs
+            label="Analysis views"
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as TabKey)}
+            tabs={TABS.map((t) => ({ value: t.key, label: t.label }))}
+          />
+
+          {activeTab === "analysis" && <AnalysisTab seasonality={data.seasonality} matrix={data.matrix} />}
+          {activeTab === "priority" && <PriorityReviewTab items={data.priorityReview} />}
+          {activeTab === "monthly-value" && <SkuMonthlyTab metric="value" items={data.priorityReview} elapsedMonths={data.elapsedMonths} />}
+          {activeTab === "monthly-qty" && <SkuMonthlyTab metric="qty" items={data.priorityReview} elapsedMonths={data.elapsedMonths} />}
+        </>
       )}
-
-      <div className="flex items-center gap-1 border-b border-slate-200">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setActiveTab(t.key)}
-            className={`px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 transition-colors ${
-              activeTab === t.key
-                ? "border-violet-600 text-violet-700"
-                : "border-transparent text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === "analysis" && <AnalysisTab seasonality={data.seasonality} matrix={data.matrix} />}
-      {activeTab === "priority" && <PriorityReviewTab items={data.priorityReview} />}
-      {activeTab === "monthly-value" && <SkuMonthlyValueTab items={data.priorityReview} elapsedMonths={data.elapsedMonths} />}
-      {activeTab === "monthly-qty" && <SkuMonthlyQtyTab items={data.priorityReview} elapsedMonths={data.elapsedMonths} />}
     </div>
   );
 }
