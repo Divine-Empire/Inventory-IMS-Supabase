@@ -9,8 +9,9 @@ import { LOCATIONS, parseItemImportRow, type ItemImportRow } from "@/lib/item-im
 //
 //   ims_item_master           upsert by itemCode (CSV fills what it has; a blank
 //                             CSV cell never wipes an existing value)
-//   ims_item_location_setting create the (item, location) row if missing; never
-//                             touches maxLevel / maxLevelPeak (system-calculated)
+//   ims_item_location_setting create the (item, location) row if missing; MAX LEVEL /
+//                             MAX LEVEL PEAK are set only when the CSV cell is filled
+//                             (blank keeps the existing value)
 //   ims_stock_ledger          LIVE STOCK -> ONE "Opening Import" IN entry per
 //                             (item, location), skipped if one already exists —
 //                             so re-importing the same CSV can't double the stock
@@ -109,13 +110,31 @@ export async function POST(req: NextRequest) {
     const itemsCreated = itemsToWrite.filter((i) => !existingByCode.has(i.itemCode)).length;
     await batched(itemsToWrite, (b) => supabase.from("ims_item_master").upsert(b, { onConflict: "itemCode" }), "Item master upsert failed");
 
-    // 2. (item, location) settings — create only.
+    // 2. (item, location) settings — create if missing; max levels only when the CSV gives one.
     const settingRows = rows.map(({ row }) => ({ itemCode: row.itemCode, locationId: locationIdByCode.get(row.locationCode)! }));
     await batched(
       settingRows,
       (b) => supabase.from("ims_item_location_setting").upsert(b, { onConflict: "itemCode,locationId", ignoreDuplicates: true }),
       "Location setting insert failed"
     );
+    const withLevels = rows.filter(({ row }) => row.maxLevel !== null || row.maxLevelPeak !== null);
+    if (withLevels.length > 0) {
+      const existingSettings = await fetchAllRows<{ itemCode: string; locationId: string; maxLevel: number | null; maxLevelPeak: number | null }>(() =>
+        supabase.from("ims_item_location_setting").select("itemCode, locationId, maxLevel, maxLevelPeak")
+      );
+      const prevByKey = new Map(existingSettings.map((s) => [`${s.itemCode}::${s.locationId}`, s]));
+      const levelRows = withLevels.map(({ row }) => {
+        const locationId = locationIdByCode.get(row.locationCode)!;
+        const prev = prevByKey.get(`${row.itemCode}::${locationId}`);
+        return {
+          itemCode: row.itemCode,
+          locationId,
+          maxLevel: row.maxLevel ?? prev?.maxLevel ?? null,
+          maxLevelPeak: row.maxLevelPeak ?? prev?.maxLevelPeak ?? null,
+        };
+      });
+      await batched(levelRows, (b) => supabase.from("ims_item_location_setting").upsert(b, { onConflict: "itemCode,locationId" }), "Max level update failed");
+    }
 
     // 3. Opening stock.
     const alreadyOpened = new Set(
@@ -142,6 +161,7 @@ export async function POST(req: NextRequest) {
         itemsCreated,
         itemsUpdated: itemsToWrite.length - itemsCreated,
         locationSettingsUpserted: settingRows.length,
+        maxLevelsSet: withLevels.length,
         openingEntriesAdded: openingRows.length,
         openingEntriesSkipped: withStock.length - openingRows.length,
         rowsWithoutStock: rows.length - withStock.length,

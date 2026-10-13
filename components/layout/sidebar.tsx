@@ -36,12 +36,11 @@ export function useVisibleMenuItems() {
   });
 }
 
+/** Divine Empire logo (public/divine-logo.svg, transparent background). */
 export function BrandMark({ className }: { className?: string }) {
   return (
-    <div className={cn("relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground", className)}>
-      <Boxes className="h-4 w-4" aria-hidden />
-      <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-sm bg-brand-lime ring-2 ring-white" aria-hidden />
-    </div>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/divine-logo.svg" alt="Divine Empire" className={cn("h-8 w-auto shrink-0", className)} />
   );
 }
 

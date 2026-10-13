@@ -3,7 +3,7 @@ import { ITEM_IMPORT_HEADERS, LOCATION_CODES } from "@/lib/item-import";
 
 export async function GET() {
   const sampleRows = LOCATION_CODES.map((loc) =>
-    ["EXAMPLE-GROUP", "EXAMPLE-CATEGORY", "ITM-0001", "Example Item Name", "", loc, "0", "NOS"].join(",")
+    ["EXAMPLE-GROUP", "EXAMPLE-CATEGORY", "ITM-0001", "Example Item Name", "", loc, "0", "NOS", "", ""].join(",")
   );
 
   const csv = [ITEM_IMPORT_HEADERS.join(","), ...sampleRows].join("\n");

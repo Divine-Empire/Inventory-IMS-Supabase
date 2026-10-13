@@ -61,7 +61,7 @@ export default function LoginPage() {
           <div className="absolute inset-x-0 top-0 h-1 bg-brand-lime" aria-hidden />
 
           <div className="mb-6 flex flex-col items-center gap-3 text-center">
-            <BrandMark className="h-12 w-12 rounded-lg [&>svg]:h-6 [&>svg]:w-6" />
+            <BrandMark className="h-16" />
             <div>
               <h1 className="text-xl font-semibold tracking-tight">Divine Empire</h1>
               <p className="text-sm text-muted-foreground">Sign in to Inventory Management</p>
