@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Boxes, AlertTriangle, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Boxes, AlertTriangle, Layers, PackageSearch, TrendingUp, TrendingDown, Minus, RefreshCw } from "lucide-react";
 import { MainLayout } from "@/components/layout/main-layout";
+import { PageHeader } from "@/components/layout/page-header";
+import { StatTile } from "@/components/data/stat-tile";
+import { ErrorState } from "@/components/data/table-states";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type InventoryRow = {
   itemCode: string;
@@ -24,14 +29,23 @@ export default function DashboardPage() {
 function DashboardContent() {
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
+    setError(null);
     fetch("/api/inventory")
       .then((r) => r.json())
       .then((res) => {
         if (res.success) setRows(res.data);
+        else setError(res.error || "Failed to load dashboard");
       })
+      .catch(() => setError("Failed to load dashboard"))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   const stats = useMemo(() => {
@@ -52,97 +66,113 @@ function DashboardContent() {
       totalLiveStock,
       totalSalesValue,
       belowReorder,
+      fast,
+      slow,
+      nonMoving,
       fastPct: Math.round((fast / total) * 100),
       slowPct: Math.round((slow / total) * 100),
       nonMovingPct: Math.round((nonMoving / total) * 100),
     };
   }, [rows]);
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
-        <Loader2 className="w-10 h-10 animate-spin text-slate-800" />
-        <p className="text-slate-900 font-semibold animate-pulse">Loading dashboard...</p>
-      </div>
-    );
-  }
+  const n = (v: number) => v.toLocaleString("en-IN");
 
   return (
-    <div className="flex flex-col gap-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center gap-3">
-        <div className="w-1.5 h-8 bg-gradient-to-b from-violet-600 to-indigo-600 rounded-full" />
-        <h1 className="text-xl font-extrabold text-slate-900 uppercase tracking-wide">Dashboard</h1>
-      </div>
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="Dashboard"
+        description={loading ? "Loading..." : `Across ${stats.uniqueLocations} location(s)`}
+        actions={
+          <Button variant="outline" size="sm" className="h-9" onClick={load} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
+            Refresh
+          </Button>
+        }
+      />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <MetricCard icon={Boxes} label="Total SKU x Location Rows" value={rows.length} color="from-violet-600 to-indigo-600" />
-        <MetricCard icon={Boxes} label="Unique Items" value={stats.uniqueItems} color="from-blue-600 to-cyan-600" />
-        <MetricCard icon={Boxes} label="Total Live Stock (units)" value={stats.totalLiveStock} color="from-emerald-600 to-teal-600" />
-        <MetricCard
-          icon={AlertTriangle}
-          label="Below Reorder Level"
-          value={stats.belowReorder}
-          color="from-rose-600 to-red-600"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4">Item Status Mix</h2>
-          <div className="flex flex-col gap-3">
-            <StatusBar icon={TrendingUp} label="Fast Moving" pct={stats.fastPct} color="bg-emerald-500" />
-            <StatusBar icon={Minus} label="Slow Moving" pct={stats.slowPct} color="bg-amber-500" />
-            <StatusBar icon={TrendingDown} label="Non-Moving" pct={stats.nonMovingPct} color="bg-slate-400" />
+      {error ? (
+        <div className="rounded-lg border bg-card">
+          <ErrorState message={error} onRetry={load} />
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatTile icon={Layers} tone="brand" label="Item-location rows" value={n(rows.length)} loading={loading} />
+            <StatTile icon={PackageSearch} tone="brand" label="Unique items" value={n(stats.uniqueItems)} loading={loading} />
+            <StatTile icon={Boxes} tone="lime" label="Live stock (units)" value={n(stats.totalLiveStock)} loading={loading} />
+            <StatTile icon={AlertTriangle} tone="danger" label="Below reorder level" value={n(stats.belowReorder)} loading={loading} />
           </div>
-        </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-4">Sales Overview</h2>
-          <p className="text-3xl font-extrabold text-slate-900">₹{stats.totalSalesValue.toLocaleString("en-IN")}</p>
-          <p className="text-xs text-slate-500 mt-1">Total sales value across all synced quotations/invoices</p>
-          <p className="text-[11px] text-slate-400 mt-3">
-            Live stock across {stats.uniqueLocations || 0} location(s). Indent/PO/Sales figures fill in once the
-            PFMS and LTO/OTP sync jobs are wired up.
-          </p>
-        </div>
-      </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <section className="rounded-lg border bg-card p-5 shadow-sm" aria-labelledby="status-mix">
+              <h2 id="status-mix" className="mb-4 text-sm font-semibold">
+                Item status mix
+              </h2>
+              {loading ? (
+                <div className="flex flex-col gap-4">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  <StatusBar icon={TrendingUp} label="Fast moving" count={stats.fast} pct={stats.fastPct} fill="bg-brand-lime" />
+                  <StatusBar icon={Minus} label="Slow moving" count={stats.slow} pct={stats.slowPct} fill="bg-amber-500" />
+                  <StatusBar icon={TrendingDown} label="Non-moving" count={stats.nonMoving} pct={stats.nonMovingPct} fill="bg-neutral/50" />
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-lg border bg-card p-5 shadow-sm" aria-labelledby="sales-overview">
+              <h2 id="sales-overview" className="mb-4 text-sm font-semibold">
+                Sales overview
+              </h2>
+              {loading ? (
+                <Skeleton className="h-10 w-48" />
+              ) : (
+                <p className="text-3xl font-semibold tabular-nums text-brand-800">₹{n(stats.totalSalesValue)}</p>
+              )}
+              <p className="mt-1 text-sm text-muted-foreground">Total sales value across all synced quotations/invoices</p>
+            </section>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function MetricCard({
+function StatusBar({
   icon: Icon,
   label,
-  value,
-  color,
+  count,
+  pct,
+  fill,
 }: {
-  icon: any;
+  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   label: string;
-  value: number;
-  color: string;
+  count: number;
+  pct: number;
+  fill: string;
 }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2">
-      <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${color} flex items-center justify-center`}>
-        <Icon className="w-4.5 h-4.5 text-white" />
-      </div>
-      <p className="text-2xl font-extrabold text-slate-900">{value}</p>
-      <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">{label}</p>
-    </div>
-  );
-}
-
-function StatusBar({ icon: Icon, label, pct, color }: { icon: any; label: string; pct: number; color: string }) {
-  return (
     <div>
-      <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-1">
-        <span className="flex items-center gap-1.5">
-          <Icon className="w-3.5 h-3.5" /> {label}
+      <div className="mb-1.5 flex items-center justify-between text-sm">
+        <span className="flex items-center gap-2 font-medium">
+          <Icon className="h-4 w-4 text-muted-foreground" aria-hidden /> {label}
         </span>
-        <span>{pct}%</span>
+        <span className="tabular-nums text-muted-foreground">
+          {count.toLocaleString("en-IN")} <span className="text-foreground">· {pct}%</span>
+        </span>
       </div>
-      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-        <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+      <div
+        className="h-2 w-full overflow-hidden rounded-full bg-secondary"
+        role="progressbar"
+        aria-label={`${label}: ${pct}%`}
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div className={`h-full rounded-full ${fill}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );

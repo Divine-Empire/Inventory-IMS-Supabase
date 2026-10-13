@@ -30,7 +30,7 @@ export function TablePagination({
       <p className="text-muted-foreground" aria-live="polite">
         {total === 0 ? "No rows" : `Showing ${from}–${to} of ${total}`}
       </p>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 whitespace-nowrap">
         <label className="flex items-center gap-2 text-muted-foreground">
           Rows per page
           <Select value={String(pageSize)} onValueChange={(v) => onPageSizeChange(Number(v))}>
